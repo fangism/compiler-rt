@@ -33,6 +33,7 @@ COMPILER_CHECK(sizeof(OFF64_T) == sizeof(off64_t));
 // rest (they depend on _FILE_OFFSET_BITS setting when building an application).
 # if defined(__ANDROID__) || !defined _FILE_OFFSET_BITS || \
   _FILE_OFFSET_BITS != 64
+using __sanitizer::OFF_T;	// gcc-4.0 workaround?  shouldn't be needed
 COMPILER_CHECK(sizeof(OFF_T) == sizeof(off_t));
 # endif
 

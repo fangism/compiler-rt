@@ -37,7 +37,9 @@
 namespace __sanitizer {
   unsigned struct_utsname_sz = sizeof(struct utsname);
   unsigned struct_stat_sz = sizeof(struct stat);
+#ifdef	HAVE_STRUCT_STAT64
   unsigned struct_stat64_sz = sizeof(struct stat64);
+#endif
   unsigned struct_rusage_sz = sizeof(struct rusage);
   unsigned struct_tm_sz = sizeof(struct tm);
 

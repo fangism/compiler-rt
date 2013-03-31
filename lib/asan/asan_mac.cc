@@ -37,10 +37,20 @@
 #include <unistd.h>
 #include <libkern/OSAtomic.h>
 
+#if defined(__GNUC__) && (__GNUC__ == 4) && (__GNUC_MINOR__ < 2)
+#define	MISSING_BLOCKS_SUPPORT
+#endif
+
 namespace __asan {
 
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   ucontext_t *ucontext = (ucontext_t*)context;
+#if defined(__ppc__)
+  *pc = ucontext->uc_mcontext->ss.srr0;
+  *bp = ucontext->uc_mcontext->ss.r1;		// or r31
+	// powerpc has no dedicated frame pointer
+  *sp = ucontext->uc_mcontext->ss.r1;
+#else
 # if SANITIZER_WORDSIZE == 64
   *pc = ucontext->uc_mcontext->__ss.__rip;
   *bp = ucontext->uc_mcontext->__ss.__rbp;
@@ -50,6 +60,7 @@ void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   *bp = ucontext->uc_mcontext->__ss.__ebp;
   *sp = ucontext->uc_mcontext->__ss.__esp;
 # endif  // SANITIZER_WORDSIZE
+#endif
 }
 
 int GetMacosVersion() {

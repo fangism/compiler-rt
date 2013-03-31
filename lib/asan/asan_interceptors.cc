@@ -96,6 +96,7 @@ void SetThreadName(const char *name) {
 }  // namespace __asan
 
 // ---------------------- Wrappers ---------------- {{{1
+using __sanitizer::OFF_T;
 using namespace __asan;  // NOLINT
 
 #define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size) \

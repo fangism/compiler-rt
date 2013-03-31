@@ -1052,6 +1052,7 @@ class LargeMmapAllocator {
   }
 
  private:
+  enum { kMaxNumChunks_e = 1 << FIRST_32_SECOND_64(15, 18) };
   static const int kMaxNumChunks = 1 << FIRST_32_SECOND_64(15, 18);
   struct Header {
     uptr map_beg;
@@ -1076,7 +1077,7 @@ class LargeMmapAllocator {
   }
 
   uptr page_size_;
-  Header *chunks_[kMaxNumChunks];
+  Header *chunks_[kMaxNumChunks_e];
   uptr n_chunks_;
   struct Stats {
     uptr n_allocs, n_frees, currently_allocated, max_allocated, by_size_log[64];

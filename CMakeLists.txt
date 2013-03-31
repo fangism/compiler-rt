@@ -125,7 +125,7 @@ set(SANITIZER_COMMON_CFLAGS
   -fno-builtin
   -fno-exceptions
   -fomit-frame-pointer
-  -funwind-tables
+  -fasynchronous-unwind-tables
   -O3
   )
 if(NOT WIN32)
@@ -168,7 +168,7 @@ endif()
 # Architectures supported by Sanitizer runtimes. Specific sanitizers may
 # support only subset of these (e.g. TSan works on x86_64 only).
 filter_available_targets(SANITIZER_COMMON_SUPPORTED_ARCH
-  x86_64 i386 powerpc64 powerpc)
+  x86_64 i386 ppc64 ppc)
 
 file(GLOB_RECURSE COMPILER_RT_HEADERS
   RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/include"

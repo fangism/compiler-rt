@@ -15,6 +15,46 @@
 #ifndef SANITIZER_ATOMIC_CLANG_H
 #define SANITIZER_ATOMIC_CLANG_H
 
+#define USE_DARWIN_ATOMICS			1
+#if USE_DARWIN_ATOMICS
+#include <libkern/OSAtomic.h>
+
+#define	__sync_synchronize		OSMemoryBarrier
+// argument and return types for OSAtomic library functions
+typedef	int32_t		atomic32_t;
+
+template <class T>
+static inline
+T* vcast(volatile T* ptr) { return const_cast<T*>(ptr); }
+
+template <class T, class S>
+static inline
+T as_a(S ptr) {
+//  static_assert(sizeof(S) == sizeof(T));
+//  return static_cast<T>(ptr);
+  return reinterpret_cast<T>(ptr);
+}
+
+template <class T>
+static inline
+T
+__sync_fetch_and_add(volatile T* ptr, const T v) {
+	const T ret = *ptr;
+	OSAtomicAdd32Barrier(v, as_a<atomic32_t*>(vcast(ptr)));
+	return ret;
+}
+
+template <class T>
+static
+inline
+T
+__sync_val_compare_and_swap(volatile T* ptr, const T oldv, const T newv) {
+  const T ret = *ptr;
+  OSAtomicCompareAndSwap32Barrier(oldv, newv, as_a<atomic32_t*>(vcast(ptr)));
+  return ret;
+}
+#endif	// USE_DARWIN_ATOMICS
+
 namespace __sanitizer {
 
 INLINE void atomic_signal_fence(memory_order) {
@@ -91,7 +131,11 @@ INLINE typename T::Type atomic_exchange(volatile T *a,
   DCHECK(!((uptr)a % sizeof(*a)));
   if (mo & (memory_order_release | memory_order_acq_rel | memory_order_seq_cst))
     __sync_synchronize();
+#if USE_DARWIN_ATOMICS
+  v = OSAtomicTestAndSetBarrier(v, vcast(&a->val_dont_use));
+#else
   v = __sync_lock_test_and_set(&a->val_dont_use, v);
+#endif
   if (mo == memory_order_seq_cst)
     __sync_synchronize();
   return v;
