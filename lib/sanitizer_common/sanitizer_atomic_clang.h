@@ -15,7 +15,13 @@
 #ifndef SANITIZER_ATOMIC_CLANG_H
 #define SANITIZER_ATOMIC_CLANG_H
 
-#define USE_DARWIN_ATOMICS			1
+/**
+	When compiling with gcc-4.0 during stage 1, 
+	these workaround definitions are needed.
+	Stage 2 and beyond should use clang's built-ins.
+	See also workarounds in llvm/lib/Support/Atomic.cpp.
+ */
+#define USE_DARWIN_ATOMICS		(defined(__APPLE__) && defined(__GNUC__) && (__GNUC__ == 4) && (__GNUC_MINOR__ < 2))
 #if USE_DARWIN_ATOMICS
 #include <libkern/OSAtomic.h>
 
