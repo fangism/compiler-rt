@@ -178,7 +178,23 @@ set(i386_SOURCES
   i386/umoddi3.S
   ${GENERIC_SOURCES})
 
-foreach(arch x86_64 i386)
+set(ppc_SOURCES
+	ppc/divtc3.c
+	ppc/fixtfdi.c
+	ppc/floatditf.c
+	ppc/floatunditf.c
+	ppc/fixunstfdi.c
+	ppc/gcc_qadd.c
+	ppc/gcc_qdiv.c
+	ppc/gcc_qmul.c
+	ppc/gcc_qsub.c
+	ppc/multc3.c
+	ppc/restFP.S
+	ppc/saveFP.S
+	ppc/cache_flush.S
+	${GENERIC_SOURCES})
+
+foreach(arch x86_64 i386 ppc)
   if(CAN_TARGET_${arch})
     add_compiler_rt_static_runtime(clang_rt.${arch} ${arch}
       SOURCES ${${arch}_SOURCES}

@@ -11,7 +11,12 @@
 #include "int_lib.h"
 
 #if __APPLE__
+#if 0
+/* only appeared in 10.5+ (darwin9) */
   #include <libkern/OSCacheControl.h>
+#else
+  #include "OSCacheControl.h"		/* provided */
+#endif
 #endif
 
 /*

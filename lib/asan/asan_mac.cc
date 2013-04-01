@@ -45,7 +45,7 @@ namespace __asan {
 
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   ucontext_t *ucontext = (ucontext_t*)context;
-#if defined(__ppc__)
+#if defined(__ppc__) || defined(__ppc64__)
   *pc = ucontext->uc_mcontext->ss.srr0;
   *bp = ucontext->uc_mcontext->ss.r1;		// or r31
 	// powerpc has no dedicated frame pointer

@@ -91,8 +91,8 @@ if("${LLVM_NATIVE_ARCH}" STREQUAL "X86")
 elseif("${LLVM_NATIVE_ARCH}" STREQUAL "PowerPC")
   # Explicitly set -m flag on powerpc, because on ppc64 defaults for gcc and
   # clang are different.
-  test_target_arch(powerpc64 "-m64")
-  test_target_arch(powerpc "-m32")
+  test_target_arch(ppc64 "-m64")
+  test_target_arch(ppc "-m32")
 endif()
 
 # We only support running instrumented tests when we're not cross compiling
