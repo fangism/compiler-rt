@@ -35,11 +35,14 @@ typedef __SIZE_TYPE__ size_t;
 #  elif defined(__arm)
 #    define __FOPEN_NAME "_fopen"
 #    define __FWRITE_NAME "_fwrite"
+#  elif defined(__ppc__)
+#    define __FOPEN_NAME "_fopen"
+#    define __FWRITE_NAME "_fwrite"
 #  else
 #    error "unrecognized architecture for targetting OS X"
 #  endif
 #elif defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
-#  if defined(__i386) || defined (__x86_64)
+#  if defined(__i386) || defined (__x86_64) || defined(__ppc__)
 #    define __FOPEN_NAME "_fopen"
 #    define __FWRITE_NAME "_fwrite"
 #  elif defined(__arm)

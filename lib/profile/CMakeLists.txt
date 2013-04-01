@@ -7,7 +7,7 @@ if(APPLE)
   add_compiler_rt_osx_static_runtime(clang_rt.profile_osx
     ARCH ${PROFILE_SUPPORTED_ARCH}
     SOURCES ${PROFILE_SOURCES}
-    CFLAGS -isysroot ${COMPILER_RT_DARWIN_SDK_SYSROOT}
+#    CFLAGS -isysroot ${COMPILER_RT_DARWIN_SDK_SYSROOT}
 #    CFLAGS --sysroot=${COMPILER_RT_DARWIN_SDK_SYSROOT}
 )
 else()
