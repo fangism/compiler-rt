@@ -285,6 +285,10 @@ class InternalVector {
     CHECK_LT(i, size_);
     return data_[i];
   }
+  const T &operator[](uptr i) const {
+    CHECK_LT(i, size_);
+    return data_[i];
+  }
   void push_back(const T &element) {
     CHECK_LE(size_, capacity_);
     if (size_ == capacity_) {
@@ -301,7 +305,7 @@ class InternalVector {
     CHECK_GT(size_, 0);
     size_--;
   }
-  uptr size() {
+  uptr size() const {
     return size_;
   }
 
