@@ -23,6 +23,8 @@
 
 namespace __sanitizer {
 
+StaticSpinMutex CommonSanitizerReportMutex;
+
 static int AppendChar(char **buff, const char *buff_end, char c) {
   if (*buff < buff_end) {
     **buff = c;
@@ -173,16 +175,16 @@ void SetPrintfAndReportCallback(void (*callback)(const char *)) {
   PrintfAndReportCallback = callback;
 }
 
+#if SANITIZER_SUPPORTS_WEAK_HOOKS
 // Can be overriden in frontend.
-#ifndef SANITIZER_SUPPORTS_WEAK_HOOKS
-SANITIZER_INTERFACE_ATTRIBUTE void WEAK OnPrint(const char *str) {
-  (void)str;
-}
+SANITIZER_WEAK_ATTRIBUTE SANITIZER_INTERFACE_ATTRIBUTE
+void OnPrint(const char *str);
 #endif
 
 static void CallPrintfAndReportCallback(const char *str) {
-#ifndef SANITIZER_SUPPORTS_WEAK_HOOKS
-  OnPrint(str);
+#if SANITIZER_SUPPORTS_WEAK_HOOKS
+  if (&OnPrint != NULL)
+    OnPrint(str);
 #endif
   if (PrintfAndReportCallback)
     PrintfAndReportCallback(str);

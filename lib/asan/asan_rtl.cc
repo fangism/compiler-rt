@@ -92,7 +92,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->symbolize, "symbolize");
   ParseFlag(str, &f->verbosity, "verbosity");
   ParseFlag(str, &f->redzone, "redzone");
-  CHECK(f->redzone >= 16);
+  CHECK_GE(f->redzone, 16);
   CHECK(IsPowerOfTwo(f->redzone));
 
   ParseFlag(str, &f->debug, "debug");
@@ -106,6 +106,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->mac_ignore_invalid_free, "mac_ignore_invalid_free");
   ParseFlag(str, &f->use_fake_stack, "use_fake_stack");
   ParseFlag(str, &f->max_malloc_fill_size, "max_malloc_fill_size");
+  ParseFlag(str, &f->malloc_fill_byte, "malloc_fill_byte");
   ParseFlag(str, &f->exitcode, "exitcode");
   ParseFlag(str, &f->allow_user_poisoning, "allow_user_poisoning");
   ParseFlag(str, &f->sleep_before_dying, "sleep_before_dying");
@@ -138,7 +139,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->quarantine_size = (ASAN_LOW_MEMORY) ? 1UL << 26 : 1UL << 28;
   f->symbolize = (asan_external_symbolizer != 0);
   f->verbosity = 0;
-  f->redzone = ASAN_ALLOCATOR_VERSION == 2 ? 16 : (ASAN_LOW_MEMORY) ? 64 : 128;
+  f->redzone = 16;
   f->debug = false;
   f->report_globals = 1;
   f->check_initialization_order = false;
@@ -147,7 +148,8 @@ void InitializeFlags(Flags *f, const char *env) {
   f->replace_intrin = true;
   f->mac_ignore_invalid_free = false;
   f->use_fake_stack = true;
-  f->max_malloc_fill_size = 0;
+  f->max_malloc_fill_size = 0x1000;  // By default, fill only the first 4K.
+  f->malloc_fill_byte = 0xbe;
   f->exitcode = ASAN_DEFAULT_FAILURE_EXITCODE;
   f->allow_user_poisoning = true;
   f->sleep_before_dying = 0;
@@ -205,8 +207,8 @@ void ShowStatsAndAbort() {
 // ---------------------- mmap -------------------- {{{1
 // Reserve memory range [beg, end].
 static void ReserveShadowMemoryRange(uptr beg, uptr end) {
-  CHECK((beg % GetPageSizeCached()) == 0);
-  CHECK(((end + 1) % GetPageSizeCached()) == 0);
+  CHECK_EQ((beg % GetPageSizeCached()), 0);
+  CHECK_EQ(((end + 1) % GetPageSizeCached()), 0);
   uptr size = end - beg + 1;
   void *res = MmapFixedNoReserve(beg, size);
   if (res != (void*)beg) {

@@ -180,19 +180,21 @@ static bool IsASCII(unsigned char c) {
   return /*0x00 <= c &&*/ c <= 0x7F;
 }
 
-// Check if the global is a zero-terminated ASCII string. If so, print it.
-static void PrintGlobalNameIfASCII(const __asan_global &g) {
-  for (uptr p = g.beg; p < g.beg + g.size - 1; p++) {
-    if (!IsASCII(*(unsigned char*)p)) return;
-  }
-  if (*(char*)(g.beg + g.size - 1) != 0) return;
-  Printf("  '%s' is ascii string '%s'\n", g.name, (char*)g.beg);
-}
-
 static const char *MaybeDemangleGlobalName(const char *name) {
   // We can spoil names of globals with C linkage, so use an heuristic
   // approach to check if the name should be demangled.
   return (name[0] == '_' && name[1] == 'Z') ? Demangle(name) : name;
+}
+
+// Check if the global is a zero-terminated ASCII string. If so, print it.
+static void PrintGlobalNameIfASCII(const __asan_global &g) {
+  for (uptr p = g.beg; p < g.beg + g.size - 1; p++) {
+    unsigned char c = *(unsigned char*)p;
+    if (c == '\0' || !IsASCII(c)) return;
+  }
+  if (*(char*)(g.beg + g.size - 1) != '\0') return;
+  Printf("  '%s' is ascii string '%s'\n",
+         MaybeDemangleGlobalName(g.name), (char*)g.beg);
 }
 
 bool DescribeAddressRelativeToGlobal(uptr addr, uptr size,
@@ -296,7 +298,7 @@ bool DescribeAddressIfStack(uptr addr, uptr access_size) {
   // Report the number of stack objects.
   char *p;
   uptr n_objects = internal_simple_strtoll(frame_descr, &p, 10);
-  CHECK(n_objects > 0);
+  CHECK_GT(n_objects, 0);
   Printf("  This frame has %zu object(s):\n", n_objects);
   // Report all objects in this frame.
   for (uptr i = 0; i < n_objects; i++) {
@@ -456,10 +458,12 @@ class ScopedInErrorReport {
       internal__exit(flags()->exitcode);
     }
     ASAN_ON_ERROR();
-    // Make sure the registry is locked while we're printing an error report.
-    // We can lock the registry only here to avoid self-deadlock in case of
+    // Make sure the registry and sanitizer report mutexes are locked while
+    // we're printing an error report.
+    // We can lock them only here to avoid self-deadlock in case of
     // recursive reports.
     asanThreadRegistry().Lock();
+    CommonSanitizerReportMutex.Lock();
     reporting_thread_tid = GetCurrentTidOrInvalid();
     Printf("===================================================="
            "=============\n");

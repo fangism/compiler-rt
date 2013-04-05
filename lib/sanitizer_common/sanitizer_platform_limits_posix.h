@@ -23,19 +23,28 @@ namespace __sanitizer {
   extern unsigned struct_stat64_sz;
   extern unsigned struct_rusage_sz;
   extern unsigned struct_tm_sz;
+  extern unsigned struct_passwd_sz;
+  extern unsigned struct_sigaction_sz;
+  extern unsigned struct_itimerval_sz;
+  extern unsigned pthread_t_sz;
+
+#if !SANITIZER_ANDROID
+  extern unsigned ucontext_t_sz;
+#endif // !SANITIZER_ANDROID
 
 #if SANITIZER_LINUX
   extern unsigned struct_rlimit_sz;
   extern unsigned struct_dirent_sz;
   extern unsigned struct_statfs_sz;
   extern unsigned struct_epoll_event_sz;
-#endif // __linux__
+  extern unsigned struct_timespec_sz;
+#endif // SANITIZER_LINUX
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
   extern unsigned struct_dirent64_sz;
   extern unsigned struct_rlimit64_sz;
   extern unsigned struct_statfs64_sz;
-#endif // __linux__ && !__ANDROID__
+#endif // SANITIZER_LINUX && !SANITIZER_ANDROID
 
   void* __sanitizer_get_msghdr_iov_iov_base(void* msg, int idx);
   uptr __sanitizer_get_msghdr_iov_iov_len(void* msg, int idx);
@@ -49,6 +58,18 @@ namespace __sanitizer {
     char size[pthread_attr_t_max_sz]; // NOLINT
     void *align;
   };
+
+  uptr __sanitizer_get_sigaction_sa_sigaction(void *act);
+  void __sanitizer_set_sigaction_sa_sigaction(void *act, uptr cb);
+  bool __sanitizer_get_sigaction_sa_siginfo(void *act);
+
+  const unsigned struct_sigaction_max_sz = 256;
+  union __sanitizer_sigaction {
+    char size[struct_sigaction_max_sz]; // NOLINT
+  };
+
+  extern uptr sig_ign;
+  extern uptr sig_dfl;
 }  // namespace __sanitizer
 
 #endif

@@ -18,6 +18,7 @@
 
 #include "sanitizer_internal_defs.h"
 #include "sanitizer_libc.h"
+#include "sanitizer_mutex.h"
 
 namespace __sanitizer {
 struct StackTrace;
@@ -109,6 +110,8 @@ bool PrintsToTty();
 void Printf(const char *format, ...);
 void Report(const char *format, ...);
 void SetPrintfAndReportCallback(void (*callback)(const char *));
+// Can be used to prevent mixing error reports from different sanitizers.
+extern StaticSpinMutex CommonSanitizerReportMutex;
 
 fd_t OpenFile(const char *filename, bool write);
 // Opens the file 'file_name" and reads up to 'max_len' bytes.
@@ -307,6 +310,12 @@ class InternalVector {
   }
   uptr size() const {
     return size_;
+  }
+  const T *data() const {
+    return data_;
+  }
+  uptr capacity() const {
+    return capacity_;
   }
 
  private:

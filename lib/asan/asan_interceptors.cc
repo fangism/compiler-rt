@@ -523,7 +523,7 @@ static inline bool IsValidStrtolBase(int base) {
 }
 
 static inline void FixRealStrtolEndptr(const char *nptr, char **endptr) {
-  CHECK(endptr != 0);
+  CHECK(endptr);
   if (nptr == *endptr) {
     // No digits were found at strtol call, we need to find out the last
     // symbol accessed by strtoll on our own.
@@ -738,7 +738,7 @@ void InitializeAsanInterceptors() {
   if (flags()->verbosity > 0) {
     Report("AddressSanitizer: libc interceptors initialized\n");
   }
-#endif  // __APPLE__
+#endif  // SANITIZER_MAC
 }
 
 }  // namespace __asan
