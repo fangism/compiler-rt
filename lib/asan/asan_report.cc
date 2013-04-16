@@ -128,8 +128,8 @@ static void PrintLegend() {
     PrintShadowByte("", i, " ");
   Printf("\n");
   PrintShadowByte("  Heap left redzone:     ", kAsanHeapLeftRedzoneMagic);
-  PrintShadowByte("  Heap righ redzone:     ", kAsanHeapRightRedzoneMagic);
-  PrintShadowByte("  Freed Heap region:     ", kAsanHeapFreeMagic);
+  PrintShadowByte("  Heap right redzone:    ", kAsanHeapRightRedzoneMagic);
+  PrintShadowByte("  Freed heap region:     ", kAsanHeapFreeMagic);
   PrintShadowByte("  Stack left redzone:    ", kAsanStackLeftRedzoneMagic);
   PrintShadowByte("  Stack mid redzone:     ", kAsanStackMidRedzoneMagic);
   PrintShadowByte("  Stack right redzone:   ", kAsanStackRightRedzoneMagic);
@@ -499,7 +499,8 @@ static void ReportSummary(const char *error_type, StackTrace *stack) {
     AddressInfo ai;
     // Currently, we include the first stack frame into the report summary.
     // Maybe sometimes we need to choose another frame (e.g. skip memcpy/etc).
-    SymbolizeCode(stack->trace[0], &ai, 1);
+    uptr pc = StackTrace::GetPreviousInstructionPc(stack->trace[0]);
+    SymbolizeCode(pc, &ai, 1);
     ReportErrorSummary(error_type,
                        StripPathPrefix(ai.file, flags()->strip_path_prefix),
                        ai.line, ai.function);

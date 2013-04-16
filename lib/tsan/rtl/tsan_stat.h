@@ -292,6 +292,13 @@ enum StatType {
   StatInt_getitimer,
   StatInt_setitimer,
   StatInt_time,
+  StatInt_glob,
+  StatInt_glob64,
+  StatInt_wait,
+  StatInt_waitid,
+  StatInt_waitpid,
+  StatInt_wait3,
+  StatInt_wait4,
 
   // Dynamic annotations.
   StatAnnotation,
