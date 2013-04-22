@@ -64,7 +64,7 @@ static void AsanCheckFailed(const char *file, int line, const char *cond,
 }
 
 // -------------------------- Flags ------------------------- {{{1
-static const int kDeafultMallocContextSize = 30;
+static const int kDefaultMallocContextSize = 30;
 
 Flags asan_flags_dont_use_directly;  // use via flags().
 
@@ -125,6 +125,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->alloc_dealloc_mismatch, "alloc_dealloc_mismatch");
   ParseFlag(str, &f->use_stack_depot, "use_stack_depot");
   ParseFlag(str, &f->strict_memcmp, "strict_memcmp");
+  ParseFlag(str, &f->strict_init_order, "strict_init_order");
 }
 
 static const char *asan_external_symbolizer;
@@ -139,7 +140,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->debug = false;
   f->report_globals = 1;
   f->check_initialization_order = false;
-  f->malloc_context_size = kDeafultMallocContextSize;
+  f->malloc_context_size = kDefaultMallocContextSize;
   f->replace_str = true;
   f->replace_intrin = true;
   f->mac_ignore_invalid_free = false;
@@ -170,6 +171,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->alloc_dealloc_mismatch = (SANITIZER_MAC == 0);;
   f->use_stack_depot = true;  // Only affects allocator2.
   f->strict_memcmp = true;
+  f->strict_init_order = false;
 
   // Override from compile definition.
   ParseFlagsFromString(f, MaybeUseAsanDefaultOptionsCompileDefiniton());
