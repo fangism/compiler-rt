@@ -136,6 +136,7 @@ check_cxx_compiler_flag(-gline-tables-only SUPPORTS_GLINE_TABLES_ONLY_FLAG)
 if(SUPPORTS_GLINE_TABLES_ONLY_FLAG)
   list(APPEND SANITIZER_COMMON_CFLAGS -gline-tables-only)
 else()
+# only enable -g for stage 1, stage 2 (-no-integrated-as) unable to handle -g
   list(APPEND SANITIZER_COMMON_CFLAGS -g)
 endif()
 # Warnings suppressions.
@@ -159,7 +160,7 @@ if(APPLE)
   if(COMPILER_RT_USES_LIBCXX)
     set(SANITIZER_MIN_OSX_VERSION 10.7)
   else()
-    set(SANITIZER_MIN_OSX_VERSION 10.5)
+    set(SANITIZER_MIN_OSX_VERSION 10.4)
   endif()
   list(APPEND SANITIZER_COMMON_CFLAGS
     -mmacosx-version-min=${SANITIZER_MIN_OSX_VERSION})
