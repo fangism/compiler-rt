@@ -26,7 +26,9 @@
 #include <wchar.h>
 #include <math.h>
 
+#include <arpa/inet.h>
 #include <dlfcn.h>
+#include <grp.h>
 #include <unistd.h>
 #include <limits.h>
 #include <sys/time.h>
@@ -880,6 +882,18 @@ TEST(MemorySanitizer, clock_gettime) {
   EXPECT_NOT_POISONED(tp.tv_nsec);
 }
 
+TEST(MemorySanitizer, clock_getres) {
+  struct timespec tp;
+  EXPECT_POISONED(tp.tv_sec);
+  EXPECT_POISONED(tp.tv_nsec);
+  assert(0 == clock_getres(CLOCK_REALTIME, 0));
+  EXPECT_POISONED(tp.tv_sec);
+  EXPECT_POISONED(tp.tv_nsec);
+  assert(0 == clock_getres(CLOCK_REALTIME, &tp));
+  EXPECT_NOT_POISONED(tp.tv_sec);
+  EXPECT_NOT_POISONED(tp.tv_nsec);
+}
+
 TEST(MemorySanitizer, getitimer) {
   struct itimerval it1, it2;
   int res;
@@ -1614,6 +1628,30 @@ TEST(MemorySanitizer, PreAllocatedStackThread) {
   ASSERT_EQ(0, res);
 }
 
+TEST(MemorySanitizer, posix_memalign) {
+  void *p;
+  EXPECT_POISONED(p);
+  int res = posix_memalign(&p, 4096, 13);
+  ASSERT_EQ(0, res);
+  EXPECT_NOT_POISONED(p);
+  free(p);
+}
+
+TEST(MemorySanitizer, inet_pton) {
+  const char *s = "1:0:0:0:0:0:0:8";
+  unsigned char buf[sizeof(struct in6_addr)];
+  int res = inet_pton(AF_INET6, s, buf);
+  ASSERT_EQ(1, res);
+  EXPECT_NOT_POISONED(buf[0]);
+  EXPECT_NOT_POISONED(buf[sizeof(struct in6_addr) - 1]);
+
+  char s_out[INET6_ADDRSTRLEN];
+  EXPECT_POISONED(s_out[3]);
+  const char *q = inet_ntop(AF_INET6, buf, s_out, INET6_ADDRSTRLEN);
+  ASSERT_NE((void*)0, q);
+  EXPECT_NOT_POISONED(s_out[3]);
+}
+
 TEST(MemorySanitizer, uname) {
   struct utsname u;
   int res = uname(&u);
@@ -1664,6 +1702,18 @@ TEST(MemorySanitizer, getpwnam_r_positive) {
   char buf[10000];
   int res;
   EXPECT_UMR(res = getpwnam_r(s, &pwd, buf, sizeof(buf), &pwdres));
+}
+
+TEST(MemorySanitizer, getgrnam_r) {
+  struct group grp;
+  struct group *grpres;
+  char buf[10000];
+  int res = getgrnam_r("root", &grp, buf, sizeof(buf), &grpres);
+  assert(!res);
+  EXPECT_NOT_POISONED(grp.gr_name);
+  assert(grp.gr_name);
+  EXPECT_NOT_POISONED(grp.gr_name[0]);
+  EXPECT_NOT_POISONED(grp.gr_gid);
 }
 
 template<class T>

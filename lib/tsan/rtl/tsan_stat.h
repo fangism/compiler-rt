@@ -284,8 +284,12 @@ enum StatType {
   StatInt_frexpl,
   StatInt_getpwnam,
   StatInt_getpwuid,
+  StatInt_getgrnam,
+  StatInt_getgrgid,
   StatInt_getpwnam_r,
   StatInt_getpwuid_r,
+  StatInt_getgrnam_r,
+  StatInt_getgrgid_r,
   StatInt_clock_getres,
   StatInt_clock_gettime,
   StatInt_clock_settime,
@@ -299,6 +303,8 @@ enum StatType {
   StatInt_waitpid,
   StatInt_wait3,
   StatInt_wait4,
+  StatInt_inet_ntop,
+  StatInt_inet_pton,
 
   // Dynamic annotations.
   StatAnnotation,

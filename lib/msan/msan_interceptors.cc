@@ -114,8 +114,10 @@ INTERCEPTOR(void *, memset, void *s, int c, SIZE_T n) {
 INTERCEPTOR(int, posix_memalign, void **memptr, SIZE_T alignment, SIZE_T size) {
   GET_MALLOC_STACK_TRACE;
   CHECK_EQ(alignment & (alignment - 1), 0);
-  *memptr = MsanReallocate(&stack, 0, size, alignment, false);
   CHECK_NE(memptr, 0);
+  *memptr = MsanReallocate(&stack, 0, size, alignment, false);
+  CHECK_NE(*memptr, 0);
+  __msan_unpoison(memptr, sizeof(*memptr));
   return 0;
 }
 
@@ -744,7 +746,7 @@ INTERCEPTOR(void *, malloc, SIZE_T size) {
   return MsanReallocate(&stack, 0, size, sizeof(u64), false);
 }
 
-void __msan_allocated_memory(void* data, uptr size) {
+void __msan_allocated_memory(const void* data, uptr size) {
   GET_MALLOC_STACK_TRACE;
   if (flags()->poison_in_malloc)
     __msan_poison(data, size);
@@ -979,12 +981,12 @@ void *fast_memcpy(void *dst, const void *src, SIZE_T n) {
 
 // These interface functions reside here so that they can use
 // fast_memset, etc.
-void __msan_unpoison(void *a, uptr size) {
+void __msan_unpoison(const void *a, uptr size) {
   if (!MEM_IS_APP(a)) return;
   fast_memset((void*)MEM_TO_SHADOW((uptr)a), 0, size);
 }
 
-void __msan_poison(void *a, uptr size) {
+void __msan_poison(const void *a, uptr size) {
   if (!MEM_IS_APP(a)) return;
   fast_memset((void*)MEM_TO_SHADOW((uptr)a),
               __msan::flags()->poison_heap_with_zeroes ? 0 : -1, size);
