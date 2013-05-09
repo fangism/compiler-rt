@@ -128,6 +128,7 @@ set(SANITIZER_COMMON_CFLAGS
   -fasynchronous-unwind-tables
   -O3
   )
+#  -fno-stack-protector
 if(NOT WIN32)
   list(APPEND SANITIZER_COMMON_CFLAGS -fvisibility=hidden)
 endif()
@@ -137,7 +138,7 @@ if(SUPPORTS_GLINE_TABLES_ONLY_FLAG)
   list(APPEND SANITIZER_COMMON_CFLAGS -gline-tables-only)
 else()
 # only enable -g for stage 1, stage 2 (-no-integrated-as) unable to handle -g
-  list(APPEND SANITIZER_COMMON_CFLAGS -g)
+#  list(APPEND SANITIZER_COMMON_CFLAGS -g)
 endif()
 # Warnings suppressions.
 check_cxx_compiler_flag(-Wno-variadic-macros SUPPORTS_NO_VARIADIC_MACROS_FLAG)
