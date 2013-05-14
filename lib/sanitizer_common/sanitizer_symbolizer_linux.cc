@@ -124,7 +124,8 @@ bool StartSymbolizerSubprocess(const char *path_to_symbolizer,
 }
 
 #if SANITIZER_ANDROID
-uptr GetListOfModules(LoadedModule *modules, uptr max_modules) {
+uptr GetListOfModules(LoadedModule *modules, uptr max_modules,
+                      string_predicate_t filter) {
   UNIMPLEMENTED();
 }
 #else  // SANITIZER_ANDROID
@@ -133,7 +134,9 @@ typedef ElfW(Phdr) Elf_Phdr;
 struct DlIteratePhdrData {
   LoadedModule *modules;
   uptr current_n;
+  bool first;
   uptr max_n;
+  string_predicate_t filter;
 };
 
 static const uptr kMaxPathLength = 512;
@@ -144,7 +147,8 @@ static int dl_iterate_phdr_cb(dl_phdr_info *info, size_t size, void *arg) {
     return 0;
   InternalScopedBuffer<char> module_name(kMaxPathLength);
   module_name.data()[0] = '\0';
-  if (data->current_n == 0) {
+  if (data->first) {
+    data->first = false;
     // First module is the binary itself.
     uptr module_name_len = internal_readlink(
         "/proc/self/exe", module_name.data(), module_name.size());
@@ -161,6 +165,8 @@ static int dl_iterate_phdr_cb(dl_phdr_info *info, size_t size, void *arg) {
   }
   if (module_name.data()[0] == '\0')
     return 0;
+  if (data->filter && !data->filter(module_name.data()))
+    return 0;
   void *mem = &data->modules[data->current_n];
   LoadedModule *cur_module = new(mem) LoadedModule(module_name.data(),
                                                    info->dlpi_addr);
@@ -176,9 +182,10 @@ static int dl_iterate_phdr_cb(dl_phdr_info *info, size_t size, void *arg) {
   return 0;
 }
 
-uptr GetListOfModules(LoadedModule *modules, uptr max_modules) {
+uptr GetListOfModules(LoadedModule *modules, uptr max_modules,
+                      string_predicate_t filter) {
   CHECK(modules);
-  DlIteratePhdrData data = {modules, 0, max_modules};
+  DlIteratePhdrData data = {modules, 0, true, max_modules, filter};
   dl_iterate_phdr(dl_iterate_phdr_cb, &data);
   return data.current_n;
 }
