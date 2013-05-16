@@ -173,8 +173,8 @@ TEST(AddressSanitizer, UAF_char) {
 TEST(AddressSanitizer, UAF_long_double) {
   if (sizeof(long double) == sizeof(double)) return;
   long double *p = Ident(new long double[10]);
-  EXPECT_DEATH(Ident(p)[12] = 0, "WRITE of size 10");
-  EXPECT_DEATH(Ident(p)[0] = Ident(p)[12], "READ of size 10");
+  EXPECT_DEATH(Ident(p)[12] = 0, "WRITE of size 1[06]");
+  EXPECT_DEATH(Ident(p)[0] = Ident(p)[12], "READ of size 1[06]");
   delete [] Ident(p);
 }
 
@@ -567,7 +567,10 @@ TEST(AddressSanitizer, LongJmpTest) {
   }
 }
 
-#if not defined(__ANDROID__)
+#if !defined(__ANDROID__) && \
+    !defined(__powerpc64__) && !defined(__powerpc__)
+// Does not work on Power:
+// https://code.google.com/p/address-sanitizer/issues/detail?id=185
 TEST(AddressSanitizer, BuiltinLongJmpTest) {
   static jmp_buf buf;
   if (!__builtin_setjmp((void**)buf)) {
