@@ -1,4 +1,4 @@
-//===-- sanitizer_symbolizer_linux.cc -------------------------------------===//
+//===-- sanitizer_symbolizer_linux_libcdep.cc -----------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -19,6 +19,9 @@
 #include "sanitizer_libc.h"
 #include "sanitizer_placement_new.h"
 #include "sanitizer_symbolizer.h"
+
+// Android NDK r8e elf.h depends on stdint.h without including the latter.
+#include <stdint.h>
 
 #include <elf.h>
 #include <errno.h>
@@ -128,6 +131,10 @@ uptr GetListOfModules(LoadedModule *modules, uptr max_modules,
                       string_predicate_t filter) {
   return 0;
 }
+
+void SymbolizerPrepareForSandboxing() {
+  // Do nothing on Android.
+}
 #else  // SANITIZER_ANDROID
 typedef ElfW(Phdr) Elf_Phdr;
 
@@ -141,6 +148,32 @@ struct DlIteratePhdrData {
 
 static const uptr kMaxPathLength = 512;
 
+static char proc_self_exe_cache_str[kMaxPathLength];
+static uptr proc_self_exe_cache_len = 0;
+
+static uptr ReadBinaryName(/*out*/char *buf, uptr buf_len) {
+  uptr module_name_len = internal_readlink(
+      "/proc/self/exe", buf, buf_len);
+  int readlink_error;
+  if (internal_iserror(buf_len, &readlink_error)) {
+    if (proc_self_exe_cache_len) {
+      // If available, use the cached module name.
+      CHECK_LE(proc_self_exe_cache_len, buf_len);
+      internal_strncpy(buf, proc_self_exe_cache_str, buf_len);
+      module_name_len = internal_strlen(proc_self_exe_cache_str);
+    } else {
+      // We can't read /proc/self/exe for some reason, assume the name of the
+      // binary is unknown.
+      Report("WARNING: readlink(\"/proc/self/exe\") failed with errno %d, "
+             "some stack frames may not be symbolized\n", readlink_error);
+      module_name_len = internal_snprintf(buf, buf_len, "/proc/self/exe");
+    }
+    CHECK_LT(module_name_len, buf_len);
+    buf[module_name_len] = '\0';
+  }
+  return module_name_len;
+}
+
 static int dl_iterate_phdr_cb(dl_phdr_info *info, size_t size, void *arg) {
   DlIteratePhdrData *data = (DlIteratePhdrData*)arg;
   if (data->current_n == data->max_n)
@@ -150,16 +183,7 @@ static int dl_iterate_phdr_cb(dl_phdr_info *info, size_t size, void *arg) {
   if (data->first) {
     data->first = false;
     // First module is the binary itself.
-    uptr module_name_len = internal_readlink(
-        "/proc/self/exe", module_name.data(), module_name.size());
-    if (internal_iserror(module_name_len)) {
-      // We can't read /proc/self/exe for some reason, assume the name of the
-      // binary is unknown.
-      module_name_len = internal_snprintf(module_name.data(),
-                                          module_name.size(), "/proc/self/exe");
-    }
-    CHECK_LT(module_name_len, module_name.size());
-    module_name[module_name_len] = '\0';
+    ReadBinaryName(module_name.data(), module_name.size());
   } else if (info->dlpi_name) {
     internal_strncpy(module_name.data(), info->dlpi_name, module_name.size());
   }
@@ -188,6 +212,13 @@ uptr GetListOfModules(LoadedModule *modules, uptr max_modules,
   DlIteratePhdrData data = {modules, 0, true, max_modules, filter};
   dl_iterate_phdr(dl_iterate_phdr_cb, &data);
   return data.current_n;
+}
+
+void SymbolizerPrepareForSandboxing() {
+  if (!proc_self_exe_cache_len) {
+    proc_self_exe_cache_len =
+        ReadBinaryName(proc_self_exe_cache_str, kMaxPathLength);
+  }
 }
 #endif  // SANITIZER_ANDROID
 

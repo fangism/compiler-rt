@@ -128,7 +128,11 @@ set(SANITIZER_COMMON_CFLAGS
   -fasynchronous-unwind-tables
   -O3
   )
+# master has:
+#  -funwind-tables
 #  -fno-stack-protector
+#  -Wno-gnu  # Variadic macros with 0 arguments for ...
+
 if(NOT WIN32)
   list(APPEND SANITIZER_COMMON_CFLAGS -fvisibility=hidden)
 endif()

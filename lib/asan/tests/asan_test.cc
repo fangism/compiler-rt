@@ -353,6 +353,18 @@ TEST(AddressSanitizer, ReallocTest) {
   free(ptr2);
 }
 
+TEST(AddressSanitizer, ReallocFreedPointerTest) {
+  void *ptr = Ident(malloc(42));
+  ASSERT_TRUE(NULL != ptr);
+  free(ptr);
+  EXPECT_DEATH(ptr = realloc(ptr, 77), "attempting double-free");
+}
+
+TEST(AddressSanitizer, ReallocInvalidPointerTest) {
+  void *ptr = Ident(malloc(42));
+  EXPECT_DEATH(ptr = realloc((int*)ptr + 1, 77), "attempting free.*not malloc");
+}
+
 TEST(AddressSanitizer, ZeroSizeMallocTest) {
   // Test that malloc(0) and similar functions don't return NULL.
   void *ptr = Ident(malloc(0));
@@ -1204,4 +1216,17 @@ TEST(AddressSanitizer, LongDoubleNegativeTest) {
   static long double c;
   memcpy(Ident(&a), Ident(&b), sizeof(long double));
   memcpy(Ident(&c), Ident(&b), sizeof(long double));
+}
+
+TEST(AddressSanitizer, pthread_getschedparam) {
+  int policy;
+  struct sched_param param;
+  EXPECT_DEATH(
+      pthread_getschedparam(pthread_self(), &policy, Ident(&param) + 2),
+      "AddressSanitizer: stack-buffer-overflow");
+  EXPECT_DEATH(
+      pthread_getschedparam(pthread_self(), Ident(&policy) - 1, &param),
+      "AddressSanitizer: stack-buffer-overflow");
+  int res = pthread_getschedparam(pthread_self(), &policy, &param);
+  ASSERT_EQ(0, res);
 }
