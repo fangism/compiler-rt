@@ -89,6 +89,15 @@ typedef __sanitizer::OFF64_T OFF64_T;
 #if defined(__APPLE__)
 #include <sys/cdefs.h>  // For __DARWIN_ALIAS_C().
 
+// on darwin8 (OS X 10.4), no library symbols were version-suffixed with "$UNIX2003"
+// compare <sys/cdefs.h> across Darwin versions for reference
+#ifndef	__DARWIN_ALIAS
+#define	__DARWIN_ALIAS(sym)
+#endif
+#ifndef	__DARWIN_ALIAS_C
+#define	__DARWIN_ALIAS_C(sym)
+#endif
+
 // Just a pair of pointers.
 struct interpose_substitution {
   const uptr replacement;

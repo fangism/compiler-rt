@@ -22,6 +22,7 @@
             __attribute__((visibility("default"))) const char sym##_tmp4 = 0; \
         extern const char sym##_tmp5 __asm("$ld$hide$os10.5$_" #sym ); \
             __attribute__((visibility("default"))) const char sym##_tmp5 = 0; 
+    #define NOT_HERE_IN_10_8_AND_EARLIER(sym) 
   #else
     #define NOT_HERE_BEFORE_10_6(sym) \
          extern const char sym##_tmp4 __asm("$ld$hide$os10.4$_" #sym ); \
