@@ -32,6 +32,7 @@ static void InitializeFlags() {
   f->report_blocks = false;
   f->resolution = 0;
   f->max_leaks = 0;
+  f->exitcode = 23;
   f->log_pointers = false;
   f->log_threads = false;
 
@@ -47,6 +48,7 @@ static void InitializeFlags() {
     CHECK_GE(&f->max_leaks, 0);
     ParseFlag(options, &f->log_pointers, "log_pointers");
     ParseFlag(options, &f->log_threads, "log_threads");
+    ParseFlag(options, &f->exitcode, "exitcode");
   }
 }
 
@@ -153,15 +155,19 @@ static void ProcessThreads(SuspendedThreadsList const &suspended_threads,
 
     if (flags()->use_tls()) {
       if (flags()->log_threads) Report("TLS at %p-%p.\n", tls_begin, tls_end);
-      // Because LSan should not be loaded with dlopen(), we can assume
-      // that allocator cache will be part of static TLS image.
-      CHECK_LE(tls_begin, cache_begin);
-      CHECK_GE(tls_end, cache_end);
-      if (tls_begin < cache_begin)
-        ScanRangeForPointers(tls_begin, cache_begin, frontier, "TLS",
-                             kReachable);
-      if (tls_end > cache_end)
-        ScanRangeForPointers(cache_end, tls_end, frontier, "TLS", kReachable);
+      if (cache_begin == cache_end) {
+        ScanRangeForPointers(tls_begin, tls_end, frontier, "TLS", kReachable);
+      } else {
+        // Because LSan should not be loaded with dlopen(), we can assume
+        // that allocator cache will be part of static TLS image.
+        CHECK_LE(tls_begin, cache_begin);
+        CHECK_GE(tls_end, cache_end);
+        if (tls_begin < cache_begin)
+          ScanRangeForPointers(tls_begin, cache_begin, frontier, "TLS",
+                               kReachable);
+        if (tls_end > cache_end)
+          ScanRangeForPointers(cache_end, tls_end, frontier, "TLS", kReachable);
+      }
     }
   }
 }
@@ -265,32 +271,53 @@ void PrintLeakedCb::operator()(void *p) const {
 }
 
 static void PrintLeaked() {
-  Printf("\nReporting individual blocks:\n");
+  Printf("Reporting individual blocks:\n");
+  Printf("============================\n");
   ForEachChunk(PrintLeakedCb());
+  Printf("\n");
 }
+
+enum LeakCheckResult {
+  kFatalError,
+  kLeaksFound,
+  kNoLeaks
+};
 
 static void DoLeakCheckCallback(const SuspendedThreadsList &suspended_threads,
                                 void *arg) {
+  LeakCheckResult *result = reinterpret_cast<LeakCheckResult *>(arg);
+  CHECK_EQ(*result, kFatalError);
   // Allocator must not be locked when we call GetRegionBegin().
   UnlockAllocator();
-  bool *success = reinterpret_cast<bool *>(arg);
   ClassifyAllChunks(suspended_threads);
   LeakReport leak_report;
   CollectLeaks(&leak_report);
-  if (!leak_report.IsEmpty()) {
-    leak_report.PrintLargest(flags()->max_leaks);
-    if (flags()->report_blocks)
-      PrintLeaked();
+  if (leak_report.IsEmpty()) {
+    *result = kNoLeaks;
+    return;
   }
+  Printf("\n");
+  Printf("=================================================================\n");
+  Report("ERROR: LeakSanitizer: detected leaks.\n");
+  leak_report.PrintLargest(flags()->max_leaks);
+  if (flags()->report_blocks)
+    PrintLeaked();
+  leak_report.PrintSummary();
+  Printf("\n");
   ForEachChunk(ClearTagCb());
-  *success = true;
+  *result = kLeaksFound;
 }
 
 void DoLeakCheck() {
-  bool success = false;
-  LockAndSuspendThreads(DoLeakCheckCallback, &success);
-  if (!success)
-    Report("Leak check failed!\n");
+  LeakCheckResult result = kFatalError;
+  LockAndSuspendThreads(DoLeakCheckCallback, &result);
+  if (result == kFatalError) {
+    Report("LeakSanitizer has encountered a fatal error.\n");
+    Die();
+  } else if (result == kLeaksFound) {
+    if (flags()->exitcode)
+      internal__exit(flags()->exitcode);
+  }
 }
 
 ///// Reporting of leaked blocks' addresses (for testing). /////
@@ -367,21 +394,31 @@ void LeakReport::PrintLargest(uptr max_leaks) {
            "reported.\n",
            kMaxLeaksConsidered);
   if (max_leaks > 0 && max_leaks < leaks_.size())
-    Printf("The %llu largest leak%s:\n", max_leaks, max_leaks > 1 ? "s" : "");
+    Printf("The %llu largest leak(s):\n", max_leaks);
   InternalSort(&leaks_, leaks_.size(), IsLarger);
   max_leaks = max_leaks > 0 ? Min(max_leaks, leaks_.size()) : leaks_.size();
   for (uptr i = 0; i < max_leaks; i++) {
-    Printf("\n%s leak of %llu bytes in %llu objects allocated from:\n",
+    Printf("%s leak of %llu byte(s) in %llu object(s) allocated from:\n",
            leaks_[i].is_directly_leaked ? "Direct" : "Indirect",
            leaks_[i].total_size, leaks_[i].hit_count);
     PrintStackTraceById(leaks_[i].stack_trace_id);
+    Printf("\n");
   }
   if (max_leaks < leaks_.size()) {
     uptr remaining = leaks_.size() - max_leaks;
-    Printf("\nOmitting %llu more leak%s.\n", remaining,
-           remaining > 1 ? "s" : "");
+    Printf("Omitting %llu more leak(s).\n", remaining);
   }
 }
 
+void LeakReport::PrintSummary() {
+  CHECK(leaks_.size() <= kMaxLeaksConsidered);
+  uptr bytes = 0, allocations = 0;
+  for (uptr i = 0; i < leaks_.size(); i++) {
+      bytes += leaks_[i].total_size;
+      allocations += leaks_[i].hit_count;
+  }
+  Printf("SUMMARY: LeakSanitizer: %llu byte(s) leaked in %llu allocation(s).\n",
+         bytes, allocations);
+}
 }  // namespace __lsan
 #endif  // CAN_SANITIZE_LEAKS
