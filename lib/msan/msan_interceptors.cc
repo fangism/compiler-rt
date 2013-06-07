@@ -28,7 +28,11 @@
 // ACHTUNG! No other system header includes in this file.
 // Ideally, we should get rid of stdarg.h as well.
 
-extern "C" const int __msan_keep_going;
+extern "C" SANITIZER_WEAK_ATTRIBUTE const int __msan_keep_going;
+
+int __msan_get_keep_going() {
+  return &__msan_keep_going ? __msan_keep_going : 0;
+}
 
 using namespace __msan;
 
@@ -63,7 +67,7 @@ bool IsInInterceptorScope() {
              offset, x, n);                                                   \
       __msan::PrintWarningWithOrigin(pc, bp,                                  \
                                      __msan_get_origin((char *) x + offset)); \
-      if (!__msan_keep_going) {                                               \
+      if (!__msan_get_keep_going()) {                                         \
         Printf("Exiting\n");                                                  \
         Die();                                                                \
       }                                                                       \
@@ -710,29 +714,17 @@ INTERCEPTOR(SSIZE_T, recv, int fd, void *buf, SIZE_T len, int flags) {
 }
 
 INTERCEPTOR(SSIZE_T, recvfrom, int fd, void *buf, SIZE_T len, int flags,
-    void *srcaddr, void *addrlen) {
+            void *srcaddr, int *addrlen) {
   ENSURE_MSAN_INITED();
   SIZE_T srcaddr_sz;
-  if (srcaddr)
-    srcaddr_sz = __sanitizer_get_socklen_t(addrlen);
+  if (srcaddr) srcaddr_sz = *addrlen;
   SSIZE_T res = REAL(recvfrom)(fd, buf, len, flags, srcaddr, addrlen);
   if (res > 0) {
     __msan_unpoison(buf, res);
     if (srcaddr) {
-      SIZE_T sz = __sanitizer_get_socklen_t(addrlen);
+      SIZE_T sz = *addrlen;
       __msan_unpoison(srcaddr, (sz < srcaddr_sz) ? sz : srcaddr_sz);
     }
-  }
-  return res;
-}
-
-INTERCEPTOR(SSIZE_T, recvmsg, int fd, struct msghdr *msg, int flags) {
-  ENSURE_MSAN_INITED();
-  SSIZE_T res = REAL(recvmsg)(fd, msg, flags);
-  if (res > 0) {
-    for (SIZE_T i = 0; i < __sanitizer_get_msghdr_iovlen(msg); ++i)
-      __msan_unpoison(__sanitizer_get_msghdr_iov_iov_base(msg, i),
-          __sanitizer_get_msghdr_iov_iov_len(msg, i));
   }
   return res;
 }
@@ -985,18 +977,24 @@ struct MSanInterceptorContext {
   __msan_unpoison(ptr, size)
 #define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size) \
   CHECK_UNPOISONED_CTX(ctx, ptr, size);
-#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)                \
-  if (msan_init_is_running) return REAL(func)(__VA_ARGS__);     \
-  MSanInterceptorContext msan_ctx = { IsInInterceptorScope() }; \
-  ctx = (void *)&msan_ctx;                                      \
-  InterceptorScope interceptor_scope;                           \
+#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)              \
+  if (msan_init_is_running) return REAL(func)(__VA_ARGS__);   \
+  MSanInterceptorContext msan_ctx = {IsInInterceptorScope()}; \
+  ctx = (void *)&msan_ctx;                                    \
+  InterceptorScope interceptor_scope;                         \
   ENSURE_MSAN_INITED();
 #define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) \
   do {                                         \
   } while (false)
-#define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) do { } while (false)
+#define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) \
+  do {                                         \
+  } while (false)
+#define COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, newfd) \
+  do {                                                      \
+  } while (false)
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) \
-  do { } while (false)  // FIXME
+  do {                                                \
+  } while (false)  // FIXME
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) CHECK_UNPOISONED(p, s)
@@ -1194,7 +1192,6 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(epoll_pwait);
   INTERCEPT_FUNCTION(recv);
   INTERCEPT_FUNCTION(recvfrom);
-  INTERCEPT_FUNCTION(recvmsg);
   INTERCEPT_FUNCTION(dladdr);
   INTERCEPT_FUNCTION(dlopen);
   INTERCEPT_FUNCTION(dl_iterate_phdr);

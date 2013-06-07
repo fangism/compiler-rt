@@ -1392,22 +1392,6 @@ TSAN_INTERCEPTOR(int, listen, int fd, int backlog) {
   return res;
 }
 
-TSAN_INTERCEPTOR(int, accept, int fd, void *addr, unsigned *addrlen) {
-  SCOPED_TSAN_INTERCEPTOR(accept, fd, addr, addrlen);
-  int fd2 = REAL(accept)(fd, addr, addrlen);
-  if (fd >= 0 && fd2 >= 0)
-    FdSocketAccept(thr, pc, fd, fd2);
-  return fd2;
-}
-
-TSAN_INTERCEPTOR(int, accept4, int fd, void *addr, unsigned *addrlen, int f) {
-  SCOPED_TSAN_INTERCEPTOR(accept4, fd, addr, addrlen, f);
-  int fd2 = REAL(accept4)(fd, addr, addrlen, f);
-  if (fd >= 0 && fd2 >= 0)
-    FdSocketAccept(thr, pc, fd, fd2);
-  return fd2;
-}
-
 TSAN_INTERCEPTOR(int, epoll_create, int size) {
   SCOPED_TSAN_INTERCEPTOR(epoll_create, size);
   int fd = REAL(epoll_create)(size);
@@ -1519,15 +1503,6 @@ TSAN_INTERCEPTOR(long_t, sendmsg, int fd, void *msg, int flags) {
 TSAN_INTERCEPTOR(long_t, recv, int fd, void *buf, long_t len, int flags) {
   SCOPED_TSAN_INTERCEPTOR(recv, fd, buf, len, flags);
   int res = REAL(recv)(fd, buf, len, flags);
-  if (res >= 0 && fd >= 0) {
-    FdAcquire(thr, pc, fd);
-  }
-  return res;
-}
-
-TSAN_INTERCEPTOR(long_t, recvmsg, int fd, void *msg, int flags) {
-  SCOPED_TSAN_INTERCEPTOR(recvmsg, fd, msg, flags);
-  int res = REAL(recvmsg)(fd, msg, flags);
   if (res >= 0 && fd >= 0) {
     FdAcquire(thr, pc, fd);
   }
@@ -1842,25 +1817,27 @@ struct TsanInterceptorContext {
 // Causes interceptor recursion (glob64() calls lstat64())
 #undef SANITIZER_INTERCEPT_GLOB
 
-#define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size) \
-    MemoryAccessRange(((TsanInterceptorContext*)ctx)->thr,  \
-                      ((TsanInterceptorContext*)ctx)->pc,   \
-                      (uptr)ptr, size, true)
-#define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size)       \
-    MemoryAccessRange(((TsanInterceptorContext*)ctx)->thr,  \
-                      ((TsanInterceptorContext*)ctx)->pc,   \
-                      (uptr)ptr, size, false)
-#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...) \
-    SCOPED_TSAN_INTERCEPTOR(func, __VA_ARGS__) \
-    TsanInterceptorContext _ctx = {thr, caller_pc, pc}; \
-    ctx = (void*)&_ctx; \
-    (void)ctx;
+#define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size)                      \
+  MemoryAccessRange(((TsanInterceptorContext *) ctx)->thr,                  \
+                    ((TsanInterceptorContext *) ctx)->pc, (uptr) ptr, size, \
+                    true)
+#define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size)                       \
+  MemoryAccessRange(((TsanInterceptorContext *) ctx)->thr,                  \
+                    ((TsanInterceptorContext *) ctx)->pc, (uptr) ptr, size, \
+                    false)
+#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)      \
+  SCOPED_TSAN_INTERCEPTOR(func, __VA_ARGS__);         \
+  TsanInterceptorContext _ctx = {thr, caller_pc, pc}; \
+  ctx = (void *)&_ctx;                                \
+  (void) ctx;
 #define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) \
-    FdAcquire(((TsanInterceptorContext*)ctx)->thr, pc, fd)
+  FdAcquire(((TsanInterceptorContext *) ctx)->thr, pc, fd)
 #define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) \
-    FdRelease(((TsanInterceptorContext*)ctx)->thr, pc, fd)
+  FdRelease(((TsanInterceptorContext *) ctx)->thr, pc, fd)
+#define COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, newfd) \
+  FdSocketAccept(((TsanInterceptorContext *) ctx)->thr, pc, fd, newfd)
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) \
-    ThreadSetName(((TsanInterceptorContext*)ctx)->thr, name)
+  ThreadSetName(((TsanInterceptorContext *) ctx)->thr, name)
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
 // FIXME: Implement these with MemoryAccessRange().
@@ -2062,8 +2039,6 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(connect);
   TSAN_INTERCEPT(bind);
   TSAN_INTERCEPT(listen);
-  TSAN_INTERCEPT(accept);
-  TSAN_INTERCEPT(accept4);
   TSAN_INTERCEPT(epoll_create);
   TSAN_INTERCEPT(epoll_create1);
   TSAN_INTERCEPT(close);
@@ -2079,7 +2054,6 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(send);
   TSAN_INTERCEPT(sendmsg);
   TSAN_INTERCEPT(recv);
-  TSAN_INTERCEPT(recvmsg);
 
   TSAN_INTERCEPT(unlink);
   TSAN_INTERCEPT(fopen);

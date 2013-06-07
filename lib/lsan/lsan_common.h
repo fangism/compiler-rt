@@ -32,7 +32,8 @@ namespace __lsan {
 enum ChunkTag {
   kDirectlyLeaked = 0,  // default
   kIndirectlyLeaked = 1,
-  kReachable = 2
+  kReachable = 2,
+  kSuppressed = 3
 };
 
 struct Flags {
@@ -62,6 +63,9 @@ struct Flags {
 
   // Consider unaligned pointers valid.
   bool use_unaligned;
+
+  // User-visible verbosity.
+  int verbosity;
 
   // Debug logging.
   bool log_pointers;
@@ -135,17 +139,27 @@ class CollectLeaksCb {
   LeakReport *leak_report_;
 };
 
-// Resets each chunk's tag to default (kDirectlyLeaked).
-class ClearTagCb {
- public:
-  void operator()(void *p) const;
-};
-
 // Scans each leaked chunk for pointers to other leaked chunks, and marks each
 // of them as indirectly leaked.
 class MarkIndirectlyLeakedCb {
  public:
   void operator()(void *p) const;
+};
+
+// Finds all chunk marked as kSuppressed and adds their addresses to frontier.
+class CollectSuppressedCb {
+ public:
+  explicit CollectSuppressedCb(InternalVector<uptr> *frontier)
+      : frontier_(frontier) {}
+  void operator()(void *p) const;
+ private:
+  InternalVector<uptr> *frontier_;
+};
+
+enum IgnoreObjectResult {
+  kIgnoreObjectSuccess,
+  kIgnoreObjectAlreadyIgnored,
+  kIgnoreObjectInvalid
 };
 
 // The following must be implemented in the parent tool.
@@ -167,6 +181,8 @@ bool GetThreadRangesLocked(uptr os_id, uptr *stack_begin, uptr *stack_end,
 void *PointsIntoChunk(void *p);
 // Return address of user-visible chunk contained in this allocator chunk.
 void *GetUserBegin(void *p);
+// Helper for __lsan_ignore_object().
+IgnoreObjectResult IgnoreObjectLocked(const void *p);
 // Wrapper for chunk metadata operations.
 class LsanMetadata {
  public:

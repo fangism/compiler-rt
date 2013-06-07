@@ -429,6 +429,40 @@ SCANF_INTERCEPTOR_IMPL(__isoc99_sscanf, __isoc99_vsscanf, str, format)
 #define INIT_SCANF
 #endif
 
+
+#if SANITIZER_INTERCEPT_IOCTL
+#include "sanitizer_common_interceptors_ioctl.inc"
+INTERCEPTOR(int, ioctl, int d, unsigned request, void *arg) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, ioctl, d, request, arg);
+
+  CHECK(ioctl_initialized);
+
+  // Note: TSan does not use common flags, and they are zero-initialized.
+  // This effectively disables ioctl handling in TSan.
+  if (!common_flags()->handle_ioctl)
+    return REAL(ioctl)(d, request, arg);
+
+  const ioctl_desc *desc = ioctl_lookup(request);
+  if (!desc)
+    Printf("WARNING: unknown ioctl %x\n", request);
+
+  if (desc)
+    ioctl_common_pre(ctx, desc, d, request, arg);
+  int res = REAL(ioctl)(d, request, arg);
+  // FIXME: some ioctls have different return values for success and failure.
+  if (desc && res != -1)
+    ioctl_common_post(ctx, desc, res, d, request, arg);
+  return res;
+}
+#define INIT_IOCTL \
+  ioctl_init();    \
+  INTERCEPT_FUNCTION(ioctl);
+#else
+#define INIT_IOCTL
+#endif
+
+
 #if SANITIZER_INTERCEPT_GETPWNAM_AND_FRIENDS
 INTERCEPTOR(void *, getpwnam, const char *name) {
   void *ctx;
@@ -760,12 +794,13 @@ INTERCEPTOR(int, getaddrinfo, char *node, char *service,
   if (hints)
     COMMON_INTERCEPTOR_READ_RANGE(ctx, hints, sizeof(__sanitizer_addrinfo));
   int res = REAL(getaddrinfo)(node, service, hints, out);
-  if (res == 0) {
+  if (res == 0 && out) {
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, out, sizeof(*out));
     struct __sanitizer_addrinfo *p = *out;
     while (p) {
-      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p, sizeof(__sanitizer_addrinfo));
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p, sizeof(*p));
       if (p->ai_addr)
-        COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p->ai_addr, struct_sockaddr_sz);
+        COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p->ai_addr, p->ai_addrlen);
       if (p->ai_canonname)
         COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p->ai_canonname,
                                        REAL(strlen)(p->ai_canonname) + 1);
@@ -961,6 +996,135 @@ INTERCEPTOR(int, getsockopt, int sockfd, int level, int optname, void *optval,
 #define INIT_GETSOCKOPT
 #endif
 
+#if SANITIZER_INTERCEPT_ACCEPT
+INTERCEPTOR(int, accept, int fd, void *addr, unsigned *addrlen) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, accept, fd, addr, addrlen);
+  unsigned addrlen0;
+  if (addrlen) {
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, addrlen, sizeof(*addrlen));
+    addrlen0 = *addrlen;
+  }
+  int fd2 = REAL(accept)(fd, addr, addrlen);
+  if (fd2 >= 0) {
+    if (fd >= 0)
+      COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, fd2);
+    if (addr && addrlen)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, addr, Min(*addrlen, addrlen0));
+  }
+  return fd2;
+}
+#define INIT_ACCEPT INTERCEPT_FUNCTION(accept);
+#else
+#define INIT_ACCEPT
+#endif
+
+#if SANITIZER_INTERCEPT_ACCEPT4
+INTERCEPTOR(int, accept4, int fd, void *addr, unsigned *addrlen, int f) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, accept4, fd, addr, addrlen, f);
+  unsigned addrlen0;
+  if (addrlen) {
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, addrlen, sizeof(*addrlen));
+    addrlen0 = *addrlen;
+  }
+  int fd2 = REAL(accept4)(fd, addr, addrlen, f);
+  if (fd2 >= 0) {
+    if (fd >= 0)
+      COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, fd2);
+    if (addr && addrlen)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, addr, Min(*addrlen, addrlen0));
+  }
+  return fd2;
+}
+#define INIT_ACCEPT4 INTERCEPT_FUNCTION(accept4);
+#else
+#define INIT_ACCEPT4
+#endif
+
+#if SANITIZER_INTERCEPT_MODF
+INTERCEPTOR(double, modf, double x, double *iptr) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, modf, x, iptr);
+  double res = REAL(modf)(x, iptr);
+  if (iptr) {
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, iptr, sizeof(*iptr));
+  }
+  return res;
+}
+INTERCEPTOR(float, modff, float x, float *iptr) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, modff, x, iptr);
+  float res = REAL(modff)(x, iptr);
+  if (iptr) {
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, iptr, sizeof(*iptr));
+  }
+  return res;
+}
+INTERCEPTOR(long double, modfl, long double x, long double *iptr) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, modfl, x, iptr);
+  long double res = REAL(modfl)(x, iptr);
+  if (iptr) {
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, iptr, sizeof(*iptr));
+  }
+  return res;
+}
+#define INIT_MODF            \
+  INTERCEPT_FUNCTION(modf);  \
+  INTERCEPT_FUNCTION(modff); \
+  INTERCEPT_FUNCTION(modfl);
+#else
+#define INIT_MODF
+#endif
+
+#if SANITIZER_INTERCEPT_RECVMSG
+static void write_msghdr(void *ctx, struct __sanitizer_msghdr *msg) {
+  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, msg, sizeof(*msg));
+  if (msg->msg_name)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, msg->msg_name,
+                                   REAL(strlen)((char *)msg->msg_name) + 1);
+  if (msg->msg_iov)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, msg->msg_iov, msg->msg_iovlen);
+  for (SIZE_T i = 0; i < msg->msg_iovlen; ++i)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, msg->msg_iov[i].iov_base,
+                                   msg->msg_iov[i].iov_len);
+  if (msg->msg_control)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, msg->msg_control, msg->msg_controllen);
+}
+
+INTERCEPTOR(SSIZE_T, recvmsg, int fd, struct __sanitizer_msghdr *msg,
+            int flags) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, recvmsg, fd, msg, flags);
+  SSIZE_T res = REAL(recvmsg)(fd, msg, flags);
+  if (res >= 0) {
+    if (fd >= 0) COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd);
+    if (msg) write_msghdr(ctx, msg);
+  }
+  return res;
+}
+#define INIT_RECVMSG INTERCEPT_FUNCTION(recvmsg);
+#else
+#define INIT_RECVMSG
+#endif
+
+#if SANITIZER_INTERCEPT_GETPEERNAME
+INTERCEPTOR(int, getpeername, int sockfd, void *addr, unsigned *addrlen) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getpeername, sockfd, addr, addrlen);
+  unsigned addr_sz;
+  if (addrlen) addr_sz = *addrlen;
+  int res = REAL(getpeername)(sockfd, addr, addrlen);
+  if (!res && addr && addrlen)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, addr, Min(addr_sz, *addrlen));
+  return res;
+}
+#define INIT_GETPEERNAME INTERCEPT_FUNCTION(getpeername);
+#else
+#define INIT_GETPEERNAME
+#endif
+
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_STRCASECMP;                         \
   INIT_STRNCASECMP;                        \
@@ -988,4 +1152,10 @@ INTERCEPTOR(int, getsockopt, int sockfd, int level, int optname, void *optval,
   INIT_GETSOCKNAME;                        \
   INIT_GETHOSTBYNAME;                      \
   INIT_GETHOSTBYNAME_R;                    \
-  INIT_GETSOCKOPT;
+  INIT_GETSOCKOPT;                         \
+  INIT_ACCEPT;                             \
+  INIT_ACCEPT4;                            \
+  INIT_MODF;                               \
+  INIT_RECVMSG;                            \
+  INIT_GETPEERNAME;                        \
+  INIT_IOCTL;

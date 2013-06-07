@@ -422,10 +422,21 @@ static void *Allocate(uptr size, uptr alignment, StackTrace *stack,
     uptr fill_size = Min(size, (uptr)fl.max_malloc_fill_size);
     REAL(memset)(res, fl.malloc_fill_byte, fill_size);
   }
+  if (t && t->lsan_disabled())
+    m->lsan_tag = __lsan::kSuppressed;
+  else
+    m->lsan_tag = __lsan::kDirectlyLeaked;
   // Must be the last mutation of metadata in this function.
   atomic_store((atomic_uint8_t *)m, CHUNK_ALLOCATED, memory_order_release);
   ASAN_MALLOC_HOOK(res, size);
   return res;
+}
+
+static void ReportInvalidFree(void *ptr, u8 chunk_state, StackTrace *stack) {
+  if (chunk_state == CHUNK_QUARANTINE)
+    ReportDoubleFree((uptr)ptr, stack);
+  else
+    ReportFreeNotMalloced((uptr)ptr, stack);
 }
 
 static void AtomicallySetQuarantineFlag(AsanChunk *m,
@@ -433,12 +444,8 @@ static void AtomicallySetQuarantineFlag(AsanChunk *m,
   u8 old_chunk_state = CHUNK_ALLOCATED;
   // Flip the chunk_state atomically to avoid race on double-free.
   if (!atomic_compare_exchange_strong((atomic_uint8_t*)m, &old_chunk_state,
-                                      CHUNK_QUARANTINE, memory_order_acquire)) {
-    if (old_chunk_state == CHUNK_QUARANTINE)
-      ReportDoubleFree((uptr)ptr, stack);
-    else
-      ReportFreeNotMalloced((uptr)ptr, stack);
-  }
+                                      CHUNK_QUARANTINE, memory_order_acquire))
+    ReportInvalidFree(ptr, old_chunk_state, stack);
   CHECK_EQ(CHUNK_ALLOCATED, old_chunk_state);
 }
 
@@ -447,12 +454,6 @@ static void AtomicallySetQuarantineFlag(AsanChunk *m,
 static void QuarantineChunk(AsanChunk *m, void *ptr,
                             StackTrace *stack, AllocType alloc_type) {
   CHECK_EQ(m->chunk_state, CHUNK_QUARANTINE);
-
-  // FIXME: if the free hook produces an ASan report (e.g. due to a bug),
-  // printing the report may crash as the AsanChunk free-related fields have not
-  // been updated yet. We might need to introduce yet another chunk state to
-  // handle this correctly, but don't want to yet.
-  ASAN_FREE_HOOK(ptr);
 
   if (m->alloc_type != alloc_type && flags()->alloc_dealloc_mismatch)
     ReportAllocTypeMismatch((uptr)ptr, stack,
@@ -498,6 +499,7 @@ static void Deallocate(void *ptr, StackTrace *stack, AllocType alloc_type) {
 
   uptr chunk_beg = p - kChunkHeaderSize;
   AsanChunk *m = reinterpret_cast<AsanChunk *>(chunk_beg);
+  ASAN_FREE_HOOK(ptr);
   // Must mark the chunk as quarantined before any changes to its metadata.
   AtomicallySetQuarantineFlag(m, ptr, stack);
   QuarantineChunk(m, ptr, stack, alloc_type);
@@ -513,24 +515,23 @@ static void *Reallocate(void *old_ptr, uptr new_size, StackTrace *stack) {
   thread_stats.reallocs++;
   thread_stats.realloced += new_size;
 
-  // Must mark the chunk as quarantined before any changes to its metadata.
-  // This also ensures that other threads can't deallocate it in the meantime.
-  AtomicallySetQuarantineFlag(m, old_ptr, stack);
-
-  uptr old_size = m->UsedSize();
-  uptr memcpy_size = Min(new_size, old_size);
   void *new_ptr = Allocate(new_size, 8, stack, FROM_MALLOC, true);
   if (new_ptr) {
+    u8 chunk_state = m->chunk_state;
+    if (chunk_state != CHUNK_ALLOCATED)
+      ReportInvalidFree(old_ptr, chunk_state, stack);
     CHECK_NE(REAL(memcpy), (void*)0);
+    uptr memcpy_size = Min(new_size, m->UsedSize());
+    // If realloc() races with free(), we may start copying freed memory.
+    // However, we will report racy double-free later anyway.
     REAL(memcpy)(new_ptr, old_ptr, memcpy_size);
-    QuarantineChunk(m, old_ptr, stack, FROM_MALLOC);
+    Deallocate(old_ptr, stack, FROM_MALLOC);
   }
   return new_ptr;
 }
 
-static AsanChunk *GetAsanChunkByAddr(uptr p) {
-  void *ptr = reinterpret_cast<void *>(p);
-  uptr alloc_beg = reinterpret_cast<uptr>(allocator.GetBlockBegin(ptr));
+// Assumes alloc_beg == allocator.GetBlockBegin(alloc_beg).
+static AsanChunk *GetAsanChunk(void *alloc_beg) {
   if (!alloc_beg) return 0;
   uptr *memalign_magic = reinterpret_cast<uptr *>(alloc_beg);
   if (memalign_magic[0] == kMemalignMagic) {
@@ -538,13 +539,13 @@ static AsanChunk *GetAsanChunkByAddr(uptr p) {
     CHECK(m->from_memalign);
     return m;
   }
-  if (!allocator.FromPrimary(ptr)) {
-    uptr *meta = reinterpret_cast<uptr *>(
-        allocator.GetMetaData(reinterpret_cast<void *>(alloc_beg)));
+  if (!allocator.FromPrimary(alloc_beg)) {
+    uptr *meta = reinterpret_cast<uptr *>(allocator.GetMetaData(alloc_beg));
     AsanChunk *m = reinterpret_cast<AsanChunk *>(meta[1]);
     return m;
   }
-  uptr actual_size = allocator.GetActuallyAllocatedSize(ptr);
+  uptr actual_size =
+      allocator.GetActuallyAllocatedSize(alloc_beg);
   CHECK_LE(actual_size, SizeClassMap::kMaxSize);
   // We know the actually allocted size, but we don't know the redzone size.
   // Just try all possible redzone sizes.
@@ -554,9 +555,21 @@ static AsanChunk *GetAsanChunkByAddr(uptr p) {
     if (ComputeRZLog(max_possible_size) != rz_log)
       continue;
     return reinterpret_cast<AsanChunk *>(
-        alloc_beg + rz_size - kChunkHeaderSize);
+        reinterpret_cast<uptr>(alloc_beg) + rz_size - kChunkHeaderSize);
   }
   return 0;
+}
+
+static AsanChunk *GetAsanChunkByAddr(uptr p) {
+  void *alloc_beg = allocator.GetBlockBegin(reinterpret_cast<void *>(p));
+  return GetAsanChunk(alloc_beg);
+}
+
+// Allocator must be locked when this function is called.
+static AsanChunk *GetAsanChunkByAddrFastLocked(uptr p) {
+  void *alloc_beg =
+      allocator.GetBlockBeginFastLocked(reinterpret_cast<void *>(p));
+  return GetAsanChunk(alloc_beg);
 }
 
 static uptr AllocationSize(uptr p) {
@@ -721,7 +734,7 @@ void GetAllocatorGlobalRange(uptr *begin, uptr *end) {
 
 void *PointsIntoChunk(void* p) {
   uptr addr = reinterpret_cast<uptr>(p);
-  __asan::AsanChunk *m = __asan::GetAsanChunkByAddr(addr);
+  __asan::AsanChunk *m = __asan::GetAsanChunkByAddrFastLocked(addr);
   if (!m) return 0;
   uptr chunk = m->Beg();
   if ((m->chunk_state == __asan::CHUNK_ALLOCATED) && m->AddrIsInside(addr))
@@ -730,7 +743,8 @@ void *PointsIntoChunk(void* p) {
 }
 
 void *GetUserBegin(void *p) {
-  __asan::AsanChunk *m = __asan::GetAsanChunkByAddr(reinterpret_cast<uptr>(p));
+  __asan::AsanChunk *m =
+      __asan::GetAsanChunkByAddrFastLocked(reinterpret_cast<uptr>(p));
   CHECK(m);
   return reinterpret_cast<void *>(m->Beg());
 }
@@ -775,9 +789,42 @@ template void ForEachChunk<PrintLeakedCb>(PrintLeakedCb const &callback);
 template void ForEachChunk<CollectLeaksCb>(CollectLeaksCb const &callback);
 template void ForEachChunk<MarkIndirectlyLeakedCb>(
     MarkIndirectlyLeakedCb const &callback);
-template void ForEachChunk<ClearTagCb>(ClearTagCb const &callback);
+template void ForEachChunk<CollectSuppressedCb>(
+    CollectSuppressedCb const &callback);
 #endif  // CAN_SANITIZE_LEAKS
+
+IgnoreObjectResult IgnoreObjectLocked(const void *p) {
+  uptr addr = reinterpret_cast<uptr>(p);
+  __asan::AsanChunk *m = __asan::GetAsanChunkByAddr(addr);
+  if (!m) return kIgnoreObjectInvalid;
+  if ((m->chunk_state == __asan::CHUNK_ALLOCATED) && m->AddrIsInside(addr)) {
+    if (m->lsan_tag == kSuppressed)
+      return kIgnoreObjectAlreadyIgnored;
+    m->lsan_tag = __lsan::kSuppressed;
+    return kIgnoreObjectSuccess;
+  } else {
+    return kIgnoreObjectInvalid;
+  }
+}
 }  // namespace __lsan
+
+extern "C" {
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_disable() {
+  __asan_init();
+  __asan::AsanThread *t = __asan::GetCurrentThread();
+  CHECK(t);
+  t->disable_lsan();
+}
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_enable() {
+  __asan_init();
+  __asan::AsanThread *t = __asan::GetCurrentThread();
+  CHECK(t);
+  t->enable_lsan();
+}
+}  // extern "C"
 
 // ---------------------- Interface ---------------- {{{1
 using namespace __asan;  // NOLINT

@@ -44,6 +44,8 @@ typedef CombinedAllocator<PrimaryAllocator, AllocatorCache,
 
 static Allocator allocator;
 static THREADLOCAL AllocatorCache cache;
+// All allocations made while this is > 0 will be treated as non-leaks.
+static THREADLOCAL uptr lsan_disabled;
 
 void InitializeAllocator() {
   allocator.Init();
@@ -61,6 +63,7 @@ static void RegisterAllocation(const StackTrace &stack, void *p, uptr size) {
   if (!p) return;
   ChunkMetadata *m = Metadata(p);
   CHECK(m);
+  m->tag = lsan_disabled ? kSuppressed : kDirectlyLeaked;
   m->stack_trace_id = StackDepotPut(stack.trace, stack.size);
   m->requested_size = size;
   atomic_store((atomic_uint8_t*)m, 1, memory_order_relaxed);
@@ -133,8 +136,7 @@ void GetAllocatorGlobalRange(uptr *begin, uptr *end) {
 }
 
 void *PointsIntoChunk(void* p) {
-  if (!allocator.PointerIsMine(p)) return 0;
-  void *chunk = allocator.GetBlockBegin(p);
+  void *chunk = allocator.GetBlockBeginFastLocked(p);
   if (!chunk) return 0;
   // LargeMmapAllocator considers pointers to the meta-region of a chunk to be
   // valid, but we don't want that.
@@ -186,5 +188,38 @@ template void ForEachChunk<PrintLeakedCb>(PrintLeakedCb const &callback);
 template void ForEachChunk<CollectLeaksCb>(CollectLeaksCb const &callback);
 template void ForEachChunk<MarkIndirectlyLeakedCb>(
     MarkIndirectlyLeakedCb const &callback);
-template void ForEachChunk<ClearTagCb>(ClearTagCb const &callback);
+template void ForEachChunk<CollectSuppressedCb>(
+    CollectSuppressedCb const &callback);
+
+IgnoreObjectResult IgnoreObjectLocked(const void *p) {
+  void *chunk = allocator.GetBlockBegin(p);
+  if (!chunk || p < chunk) return kIgnoreObjectInvalid;
+  ChunkMetadata *m = Metadata(chunk);
+  CHECK(m);
+  if (m->allocated && (uptr)p < (uptr)chunk + m->requested_size) {
+    if (m->tag == kSuppressed)
+      return kIgnoreObjectAlreadyIgnored;
+    m->tag = kSuppressed;
+    return kIgnoreObjectSuccess;
+  } else {
+    return kIgnoreObjectInvalid;
+  }
+}
 }  // namespace __lsan
+
+extern "C" {
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_disable() {
+  __lsan::lsan_disabled++;
+}
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_enable() {
+  if (!__lsan::lsan_disabled) {
+    Report("Unmatched call to __lsan_enable().\n");
+    Die();
+  }
+  __lsan::lsan_disabled--;
+}
+}  // extern "C"
+

@@ -136,6 +136,7 @@ void InitializeFlags(Flags *f, const char *env) {
   cf->fast_unwind_on_fatal = false;
   cf->fast_unwind_on_malloc = true;
   cf->strip_path_prefix = "";
+  cf->handle_ioctl = false;
 
   internal_memset(f, 0, sizeof(*f));
   f->quarantine_size = (ASAN_LOW_MEMORY) ? 1UL << 26 : 1UL << 28;
@@ -546,6 +547,8 @@ void __asan_init() {
   // should be set to 1 prior to initializing the threads.
   asan_inited = 1;
   asan_init_is_running = false;
+
+  InitTlsSize();
 
   // Create main thread.
   AsanTSDInit(AsanThread::TSDDtor);

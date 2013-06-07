@@ -322,6 +322,11 @@ void StatOutput(u64 *stat) {
   name[StatInt_gethostbyname2_r]         = "  gethostbyname2_r                ";
   name[StatInt_gethostbyaddr_r]          = "  gethostbyaddr_r                 ";
   name[StatInt_getsockopt]               = "  getsockopt                      ";
+  name[StatInt_modf]                     = "  modf                            ";
+  name[StatInt_modff]                    = "  modff                           ";
+  name[StatInt_modfl]                    = "  modfl                           ";
+  name[StatInt_getpeername]              = "  getpeername                     ";
+  name[StatInt_ioctl]                    = "  ioctl                           ";
 
   name[StatAnnotation]                   = "Dynamic annotations               ";
   name[StatAnnotateHappensBefore]        = "  HappensBefore                   ";

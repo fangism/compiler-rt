@@ -14,6 +14,7 @@ set(SANITIZER_SOURCES
   sanitizer_stackdepot.cc
   sanitizer_stacktrace.cc
   sanitizer_symbolizer_itanium.cc
+  sanitizer_symbolizer_linux.cc
   sanitizer_symbolizer_mac.cc
   sanitizer_symbolizer_win.cc
   sanitizer_thread_registry.cc
@@ -34,6 +35,7 @@ set(SANITIZER_LIBCDEP_SOURCES
 # headers when building our custom unit tests.
 set(SANITIZER_HEADERS
   sanitizer_allocator.h
+  sanitizer_allocator_internal.h
   sanitizer_atomic_clang.h
   sanitizer_atomic_msvc.h
   sanitizer_atomic.h

@@ -651,6 +651,62 @@ TEST(MemorySanitizer, bind_getsockname) {
   close(sock);
 }
 
+TEST(MemorySanitizer, accept) {
+  int listen_socket = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_LT(0, listen_socket);
+
+  struct sockaddr_in sai;
+  sai.sin_family = AF_INET;
+  sai.sin_port = 0;
+  sai.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  int res = bind(listen_socket, (struct sockaddr *)&sai, sizeof(sai));
+  ASSERT_EQ(0, res);
+
+  res = listen(listen_socket, 1);
+  ASSERT_EQ(0, res);
+
+  socklen_t sz = sizeof(sai);
+  res = getsockname(listen_socket, (struct sockaddr *)&sai, &sz);
+  ASSERT_EQ(0, res);
+  ASSERT_EQ(sizeof(sai), sz);
+
+  int connect_socket = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_LT(0, connect_socket);
+  res = fcntl(connect_socket, F_SETFL, O_NONBLOCK);
+  ASSERT_EQ(0, res);
+  res = connect(connect_socket, (struct sockaddr *)&sai, sizeof(sai));
+  ASSERT_EQ(-1, res);
+  ASSERT_EQ(EINPROGRESS, errno);
+
+  __msan_poison(&sai, sizeof(sai));
+  int new_sock = accept(listen_socket, (struct sockaddr *)&sai, &sz);
+  ASSERT_LT(0, new_sock);
+  ASSERT_EQ(sizeof(sai), sz);
+  EXPECT_NOT_POISONED(sai);
+
+  __msan_poison(&sai, sizeof(sai));
+  res = getpeername(new_sock, (struct sockaddr *)&sai, &sz);
+  ASSERT_EQ(0, res);
+  ASSERT_EQ(sizeof(sai), sz);
+  EXPECT_NOT_POISONED(sai);
+
+  close(new_sock);
+  close(connect_socket);
+  close(listen_socket);
+}
+
+TEST(MemorySanitizer, getaddrinfo) {
+  struct addrinfo *ai;
+  struct addrinfo hints;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;
+  int res = getaddrinfo("localhost", NULL, &hints, &ai);
+  ASSERT_EQ(0, res);
+  EXPECT_NOT_POISONED(*ai);
+  ASSERT_EQ(sizeof(sockaddr_in), ai->ai_addrlen);
+  EXPECT_NOT_POISONED(*(sockaddr_in*)ai->ai_addr); 
+}
+
 #define EXPECT_HOSTENT_NOT_POISONED(he)        \
   do {                                         \
     EXPECT_NOT_POISONED(*(he));                \
@@ -936,6 +992,24 @@ TEST(MemorySanitizer, strtold) {
   char *e;
   assert(0 != strtold("1.5", &e));
   EXPECT_NOT_POISONED((S8) e);
+}
+
+TEST(MemorySanitizer, modf) {
+  double x, y;
+  x = modf(2.1, &y);
+  EXPECT_NOT_POISONED(y);
+}
+
+TEST(MemorySanitizer, modff) {
+  float x, y;
+  x = modff(2.1, &y);
+  EXPECT_NOT_POISONED(y);
+}
+
+TEST(MemorySanitizer, modfl) {
+  long double x, y;
+  x = modfl(2.1, &y);
+  EXPECT_NOT_POISONED(y);
 }
 
 TEST(MemorySanitizer, sprintf) {  // NOLINT
@@ -1984,6 +2058,83 @@ TEST(MemorySanitizer, VolatileBitfield) {
   S->x = 1;
   EXPECT_NOT_POISONED((unsigned)S->x);
   EXPECT_POISONED((unsigned)S->y);
+}
+
+TEST(MemorySanitizer, UnalignedLoad) {
+  char x[32];
+  memset(x + 8, 0, 16);
+  EXPECT_POISONED(__sanitizer_unaligned_load16(x+6));
+  EXPECT_POISONED(__sanitizer_unaligned_load16(x+7));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load16(x+8));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load16(x+9));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load16(x+22));
+  EXPECT_POISONED(__sanitizer_unaligned_load16(x+23));
+  EXPECT_POISONED(__sanitizer_unaligned_load16(x+24));
+
+  EXPECT_POISONED(__sanitizer_unaligned_load32(x+4));
+  EXPECT_POISONED(__sanitizer_unaligned_load32(x+7));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load32(x+8));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load32(x+9));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load32(x+20));
+  EXPECT_POISONED(__sanitizer_unaligned_load32(x+21));
+  EXPECT_POISONED(__sanitizer_unaligned_load32(x+24));
+
+  EXPECT_POISONED(__sanitizer_unaligned_load64(x));
+  EXPECT_POISONED(__sanitizer_unaligned_load64(x+1));
+  EXPECT_POISONED(__sanitizer_unaligned_load64(x+7));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load64(x+8));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load64(x+9));
+  EXPECT_NOT_POISONED(__sanitizer_unaligned_load64(x+16));
+  EXPECT_POISONED(__sanitizer_unaligned_load64(x+17));
+  EXPECT_POISONED(__sanitizer_unaligned_load64(x+21));
+  EXPECT_POISONED(__sanitizer_unaligned_load64(x+24));
+}
+
+TEST(MemorySanitizer, UnalignedStore16) {
+  char x[5];
+  U2 y = 0;
+  __msan_poison(&y, 1);
+  __sanitizer_unaligned_store16(x + 1, y);
+  EXPECT_POISONED(x[0]);
+  EXPECT_POISONED(x[1]);
+  EXPECT_NOT_POISONED(x[2]);
+  EXPECT_POISONED(x[3]);
+  EXPECT_POISONED(x[4]);
+}
+
+TEST(MemorySanitizer, UnalignedStore32) {
+  char x[8];
+  U4 y4 = 0;
+  __msan_poison(&y4, 2);
+  __sanitizer_unaligned_store32(x+3, y4);
+  EXPECT_POISONED(x[0]);
+  EXPECT_POISONED(x[1]);
+  EXPECT_POISONED(x[2]);
+  EXPECT_POISONED(x[3]);
+  EXPECT_POISONED(x[4]);
+  EXPECT_NOT_POISONED(x[5]);
+  EXPECT_NOT_POISONED(x[6]);
+  EXPECT_POISONED(x[7]);
+}
+
+TEST(MemorySanitizer, UnalignedStore64) {
+  char x[16];
+  U8 y = 0;
+  __msan_poison(&y, 3);
+  __msan_poison(((char *)&y) + sizeof(y) - 2, 1);
+  __sanitizer_unaligned_store64(x+3, y);
+  EXPECT_POISONED(x[0]);
+  EXPECT_POISONED(x[1]);
+  EXPECT_POISONED(x[2]);
+  EXPECT_POISONED(x[3]);
+  EXPECT_POISONED(x[4]);
+  EXPECT_POISONED(x[5]);
+  EXPECT_NOT_POISONED(x[6]);
+  EXPECT_NOT_POISONED(x[7]);
+  EXPECT_NOT_POISONED(x[8]);
+  EXPECT_POISONED(x[9]);
+  EXPECT_NOT_POISONED(x[10]);
+  EXPECT_POISONED(x[11]);
 }
 
 TEST(MemorySanitizerDr, StoreInDSOTest) {

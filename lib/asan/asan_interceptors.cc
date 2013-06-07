@@ -108,16 +108,22 @@ using namespace __asan;  // NOLINT
 #define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size) \
   ASAN_WRITE_RANGE(ptr, size)
 #define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size) ASAN_READ_RANGE(ptr, size)
-#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)  \
-  do {                                            \
-    if (asan_init_is_running)                     \
-      return REAL(func)(__VA_ARGS__);             \
-    ctx = 0;                                      \
-    (void)ctx;                                    \
-    ENSURE_ASAN_INITED();                         \
+#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)              \
+  do {                                                        \
+    if (asan_init_is_running) return REAL(func)(__VA_ARGS__); \
+    ctx = 0;                                                  \
+    (void) ctx;                                               \
+    ENSURE_ASAN_INITED();                                     \
   } while (false)
-#define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) do { } while (false)
-#define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) do { } while (false)
+#define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) \
+  do {                                         \
+  } while (false)
+#define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) \
+  do {                                         \
+  } while (false)
+#define COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, newfd) \
+  do {                                                      \
+  } while (false)
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) SetThreadName(name)
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
@@ -241,7 +247,7 @@ INTERCEPTOR(void, __cxa_throw, void *a, void *b, void *c) {
 // Since asan maps 16T of RAM, mlock is completely unfriendly to asan.
 // All functions return 0 (success).
 static void MlockIsUnsupported() {
-  static bool printed = 0;
+  static bool printed = false;
   if (printed) return;
   printed = true;
   Printf("INFO: AddressSanitizer ignores mlock/mlockall/munlock/munlockall\n");
@@ -652,10 +658,15 @@ INTERCEPTOR(int, __cxa_atexit, void (*func)(void *), void *arg,
 }
 #endif  // ASAN_INTERCEPT___CXA_ATEXIT
 
+#if !SANITIZER_MAC
 #define ASAN_INTERCEPT_FUNC(name) do { \
       if (!INTERCEPT_FUNCTION(name) && flags()->verbosity > 0) \
         Report("AddressSanitizer: failed to intercept '" #name "'\n"); \
     } while (0)
+#else
+// OS X interceptors don't need to be initialized with INTERCEPT_FUNCTION.
+#define ASAN_INTERCEPT_FUNC(name)
+#endif  // SANITIZER_MAC
 
 #if SANITIZER_WINDOWS
 INTERCEPTOR_WINAPI(DWORD, CreateThread,
@@ -668,7 +679,7 @@ INTERCEPTOR_WINAPI(DWORD, CreateThread,
   u32 current_tid = GetCurrentTidOrInvalid();
   AsanThread *t = AsanThread::Create(start_routine, arg);
   CreateThreadContextArgs args = { t, &stack };
-  int detached = 0;  // FIXME: how can we determine it on Windows?
+  bool detached = false;  // FIXME: how can we determine it on Windows?
   asanThreadRegistry().CreateThread(*(uptr*)t, detached, current_tid, &args);
   return REAL(CreateThread)(security, stack_size,
                             asan_thread_start, t, flags, tid);
@@ -688,9 +699,6 @@ void InitializeAsanInterceptors() {
   static bool was_called_once;
   CHECK(was_called_once == false);
   was_called_once = true;
-#if SANITIZER_MAC
-  return;
-#else
   SANITIZER_COMMON_INTERCEPTORS_INIT;
 
   // Intercept mem* functions.
@@ -775,7 +783,6 @@ void InitializeAsanInterceptors() {
   if (flags()->verbosity > 0) {
     Report("AddressSanitizer: libc interceptors initialized\n");
   }
-#endif  // SANITIZER_MAC
 }
 
 }  // namespace __asan
