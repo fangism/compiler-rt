@@ -448,7 +448,7 @@ static bool HandleRacyStacks(ThreadState *thr, const StackTrace (&traces)[2],
     uptr addr_min, uptr addr_max) {
   Context *ctx = CTX();
   bool equal_stack = false;
-  RacyStacks hash;
+  RacyStacks hash = {};
   if (flags()->suppress_equal_stacks) {
     hash.hash[0] = md5_hash(traces[0].Begin(), traces[0].Size() * sizeof(uptr));
     hash.hash[1] = md5_hash(traces[1].Begin(), traces[1].Size() * sizeof(uptr));
@@ -488,7 +488,7 @@ static void AddRacyStacks(ThreadState *thr, const StackTrace (&traces)[2],
     uptr addr_min, uptr addr_max) {
   Context *ctx = CTX();
   if (flags()->suppress_equal_stacks) {
-    RacyStacks hash;
+    RacyStacks hash = {};
     hash.hash[0] = md5_hash(traces[0].Begin(), traces[0].Size() * sizeof(uptr));
     hash.hash[1] = md5_hash(traces[1].Begin(), traces[1].Size() * sizeof(uptr));
     ctx->racy_stacks.PushBack(hash);
@@ -502,13 +502,16 @@ static void AddRacyStacks(ThreadState *thr, const StackTrace (&traces)[2],
 bool OutputReport(Context *ctx,
                   const ScopedReport &srep,
                   const ReportStack *suppress_stack1,
-                  const ReportStack *suppress_stack2) {
+                  const ReportStack *suppress_stack2,
+                  const ReportLocation *suppress_loc) {
   atomic_store(&ctx->last_symbolize_time_ns, NanoTime(), memory_order_relaxed);
   const ReportDesc *rep = srep.GetReport();
   Suppression *supp = 0;
   uptr suppress_pc = IsSuppressed(rep->typ, suppress_stack1, &supp);
   if (suppress_pc == 0)
     suppress_pc = IsSuppressed(rep->typ, suppress_stack2, &supp);
+  if (suppress_pc == 0)
+    suppress_pc = IsSuppressed(rep->typ, suppress_loc, &supp);
   if (suppress_pc != 0) {
     FiredSuppression s = {srep.GetReport()->typ, suppress_pc, supp};
     ctx->fired_suppressions.PushBack(s);
@@ -533,6 +536,22 @@ bool IsFiredSuppression(Context *ctx,
           s->supp->hit_count++;
         return true;
       }
+    }
+  }
+  return false;
+}
+
+static bool IsFiredSuppression(Context *ctx,
+                               const ScopedReport &srep,
+                               uptr addr) {
+  for (uptr k = 0; k < ctx->fired_suppressions.Size(); k++) {
+    if (ctx->fired_suppressions[k].type != srep.GetReport()->typ)
+      continue;
+    FiredSuppression *s = &ctx->fired_suppressions[k];
+    if (addr == s->pc) {
+      if (s->supp)
+        s->supp->hit_count++;
+      return true;
     }
   }
   return false;
@@ -631,6 +650,8 @@ void ReportRace(ThreadState *thr) {
   else if (freed)
     typ = ReportTypeUseAfterFree;
   ScopedReport rep(typ);
+  if (IsFiredSuppression(ctx, rep, addr))
+    return;
   const uptr kMop = 2;
   StackTrace traces[kMop];
   const uptr toppc = TraceTopPC(thr);
@@ -641,6 +662,8 @@ void ReportRace(ThreadState *thr) {
   new(mset2.data()) MutexSet();
   Shadow s2(thr->racy_state[1]);
   RestoreStack(s2.tid(), s2.epoch(), &traces[1], mset2.data());
+  if (IsFiredSuppression(ctx, rep, traces[1]))
+    return;
 
   if (HandleRacyStacks(thr, traces, addr_min, addr_max))
     return;
@@ -673,8 +696,11 @@ void ReportRace(ThreadState *thr) {
   }
 #endif
 
+  ReportLocation *suppress_loc = rep.GetReport()->locs.Size() ?
+                                 rep.GetReport()->locs[0] : 0;
   if (!OutputReport(ctx, rep, rep.GetReport()->mops[0]->stack,
-                              rep.GetReport()->mops[1]->stack))
+                              rep.GetReport()->mops[1]->stack,
+                              suppress_loc))
     return;
 
   AddRacyStacks(thr, traces, addr_min, addr_max);
