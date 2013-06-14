@@ -448,7 +448,7 @@ static bool HandleRacyStacks(ThreadState *thr, const StackTrace (&traces)[2],
     uptr addr_min, uptr addr_max) {
   Context *ctx = CTX();
   bool equal_stack = false;
-  RacyStacks hash = {};
+  RacyStacks hash;
   if (flags()->suppress_equal_stacks) {
     hash.hash[0] = md5_hash(traces[0].Begin(), traces[0].Size() * sizeof(uptr));
     hash.hash[1] = md5_hash(traces[1].Begin(), traces[1].Size() * sizeof(uptr));
@@ -488,7 +488,7 @@ static void AddRacyStacks(ThreadState *thr, const StackTrace (&traces)[2],
     uptr addr_min, uptr addr_max) {
   Context *ctx = CTX();
   if (flags()->suppress_equal_stacks) {
-    RacyStacks hash = {};
+    RacyStacks hash;
     hash.hash[0] = md5_hash(traces[0].Begin(), traces[0].Size() * sizeof(uptr));
     hash.hash[1] = md5_hash(traces[1].Begin(), traces[1].Size() * sizeof(uptr));
     ctx->racy_stacks.PushBack(hash);
@@ -514,7 +514,7 @@ bool OutputReport(Context *ctx,
     suppress_pc = IsSuppressed(rep->typ, suppress_loc, &supp);
   if (suppress_pc != 0) {
     FiredSuppression s = {srep.GetReport()->typ, suppress_pc, supp};
-    ctx->fired_suppressions.PushBack(s);
+    ctx->fired_suppressions.push_back(s);
   }
   if (OnReport(rep, suppress_pc != 0))
     return false;
@@ -526,7 +526,7 @@ bool OutputReport(Context *ctx,
 bool IsFiredSuppression(Context *ctx,
                         const ScopedReport &srep,
                         const StackTrace &trace) {
-  for (uptr k = 0; k < ctx->fired_suppressions.Size(); k++) {
+  for (uptr k = 0; k < ctx->fired_suppressions.size(); k++) {
     if (ctx->fired_suppressions[k].type != srep.GetReport()->typ)
       continue;
     for (uptr j = 0; j < trace.Size(); j++) {
@@ -544,7 +544,7 @@ bool IsFiredSuppression(Context *ctx,
 static bool IsFiredSuppression(Context *ctx,
                                const ScopedReport &srep,
                                uptr addr) {
-  for (uptr k = 0; k < ctx->fired_suppressions.Size(); k++) {
+  for (uptr k = 0; k < ctx->fired_suppressions.size(); k++) {
     if (ctx->fired_suppressions[k].type != srep.GetReport()->typ)
       continue;
     FiredSuppression *s = &ctx->fired_suppressions[k];
@@ -589,7 +589,7 @@ static bool IsJavaNonsense(const ReportDesc *rep) {
           && frame->module == 0)) {
         if (frame) {
           FiredSuppression supp = {rep->typ, frame->pc, 0};
-          CTX()->fired_suppressions.PushBack(supp);
+          CTX()->fired_suppressions.push_back(supp);
         }
         return true;
       }

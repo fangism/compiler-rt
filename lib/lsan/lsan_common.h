@@ -33,7 +33,7 @@ enum ChunkTag {
   kDirectlyLeaked = 0,  // default
   kIndirectlyLeaked = 1,
   kReachable = 2,
-  kSuppressed = 3
+  kIgnored = 3
 };
 
 struct Flags {
@@ -41,9 +41,9 @@ struct Flags {
     return use_unaligned ? 1 : sizeof(uptr);
   }
 
-  // Print addresses of leaked blocks after main leak report.
-  bool report_blocks;
-  // Aggregate two blocks into one leak if this many stack frames match. If
+  // Print addresses of leaked objects after main leak report.
+  bool report_objects;
+  // Aggregate two objects into one leak if this many stack frames match. If
   // zero, the entire stack trace must match.
   int resolution;
   // The number of leaks reported.
@@ -77,7 +77,7 @@ inline Flags *flags() { return &lsan_flags; }
 
 void InitCommonLsan();
 // Testing interface. Find leaked chunks and dump their addresses to vector.
-void ReportLeaked(InternalVector<void *> *leaked, uptr sources);
+void ReportLeaked(InternalMmapVector<void *> *leaked, uptr sources);
 // Normal leak check. Find leaks and print a report according to flags.
 void DoLeakCheck();
 
@@ -97,15 +97,18 @@ class LeakReport {
   void PrintSummary();
   bool IsEmpty() { return leaks_.size() == 0; }
  private:
-  InternalVector<Leak> leaks_;
+  InternalMmapVector<Leak> leaks_;
 };
+
+typedef InternalMmapVector<uptr> Frontier;
 
 // Platform-specific functions.
 void InitializePlatformSpecificModules();
-void ProcessGlobalRegions(InternalVector<uptr> *frontier);
-void ProcessPlatformSpecificAllocations(InternalVector<uptr> *frontier);
+void ProcessGlobalRegions(Frontier *frontier);
+void ProcessPlatformSpecificAllocations(Frontier *frontier);
 
-void ScanRangeForPointers(uptr begin, uptr end, InternalVector<uptr> *frontier,
+void ScanRangeForPointers(uptr begin, uptr end,
+                          Frontier *frontier,
                           const char *region_type, ChunkTag tag);
 
 // Callables for iterating over chunks. Those classes are used as template
@@ -116,11 +119,12 @@ void ScanRangeForPointers(uptr begin, uptr end, InternalVector<uptr> *frontier,
 // as reachable and adds them to the frontier.
 class ProcessPlatformSpecificAllocationsCb {
  public:
-  explicit ProcessPlatformSpecificAllocationsCb(InternalVector<uptr> *frontier)
+  explicit ProcessPlatformSpecificAllocationsCb(
+      Frontier *frontier)
       : frontier_(frontier) {}
   void operator()(void *p) const;
  private:
-  InternalVector<uptr> *frontier_;
+  Frontier *frontier_;
 };
 
 // Prints addresses of unreachable chunks.
@@ -146,14 +150,14 @@ class MarkIndirectlyLeakedCb {
   void operator()(void *p) const;
 };
 
-// Finds all chunk marked as kSuppressed and adds their addresses to frontier.
+// Finds all chunk marked as kIgnored and adds their addresses to frontier.
 class CollectSuppressedCb {
  public:
-  explicit CollectSuppressedCb(InternalVector<uptr> *frontier)
+  explicit CollectSuppressedCb(Frontier *frontier)
       : frontier_(frontier) {}
   void operator()(void *p) const;
  private:
-  InternalVector<uptr> *frontier_;
+  Frontier *frontier_;
 };
 
 enum IgnoreObjectResult {

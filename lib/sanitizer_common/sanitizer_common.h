@@ -33,6 +33,8 @@ const uptr kCacheLineSize = 128;
 const uptr kCacheLineSize = 64;
 #endif
 
+const uptr kMaxPathLength = 512;
+
 extern const char *SanitizerToolName;  // Can be changed by the tool.
 extern uptr SanitizerVerbosity;
 
@@ -272,15 +274,15 @@ INLINE int ToLower(int c) {
 // small vectors.
 // WARNING: The current implementation supports only POD types.
 template<typename T>
-class InternalVector {
+class InternalMmapVector {
  public:
-  explicit InternalVector(uptr initial_capacity) {
+  explicit InternalMmapVector(uptr initial_capacity) {
     CHECK_GT(initial_capacity, 0);
     capacity_ = initial_capacity;
     size_ = 0;
-    data_ = (T *)MmapOrDie(capacity_ * sizeof(T), "InternalVector");
+    data_ = (T *)MmapOrDie(capacity_ * sizeof(T), "InternalMmapVector");
   }
-  ~InternalVector() {
+  ~InternalMmapVector() {
     UnmapOrDie(data_, capacity_ * sizeof(T));
   }
   T &operator[](uptr i) {
@@ -322,7 +324,7 @@ class InternalVector {
     CHECK_GT(new_capacity, 0);
     CHECK_LE(size_, new_capacity);
     T *new_data = (T *)MmapOrDie(new_capacity * sizeof(T),
-                                 "InternalVector");
+                                 "InternalMmapVector");
     internal_memcpy(new_data, data_, size_ * sizeof(T));
     T *old_data = data_;
     data_ = new_data;
@@ -330,15 +332,15 @@ class InternalVector {
     capacity_ = new_capacity;
   }
   // Disallow evil constructors.
-  InternalVector(const InternalVector&);
-  void operator=(const InternalVector&);
+  InternalMmapVector(const InternalMmapVector&);
+  void operator=(const InternalMmapVector&);
 
   T *data_;
   uptr capacity_;
   uptr size_;
 };
 
-// HeapSort for arrays and InternalVector.
+// HeapSort for arrays and InternalMmapVector.
 template<class Container, class Compare>
 void InternalSort(Container *v, uptr size, Compare comp) {
   if (size < 2)
