@@ -73,6 +73,7 @@ int GetMacosVersion() {
   CHECK_LT(len, maxlen);
   CHECK_NE(sysctl(mib, 2, version, &len, 0, 0), -1);
   switch (version[0]) {
+    case '8': return MACOS_VERSION_TIGER;
     case '9': return MACOS_VERSION_LEOPARD;
     case '1': {
       switch (version[1]) {
@@ -93,6 +94,7 @@ bool PlatformHasDifferentMemcpyAndMemmove() {
   // TODO(glider): need to check dynamically that memcpy() and memmove() are
   // actually the same function.
   return GetMacosVersion() == MACOS_VERSION_SNOW_LEOPARD;
+//  return GetMacosVersion() <= MACOS_VERSION_SNOW_LEOPARD;	// ?
 }
 
 extern "C"
