@@ -5,6 +5,7 @@ set(SANITIZER_UNITTESTS
   sanitizer_atomic_test.cc
   sanitizer_common_test.cc
   sanitizer_flags_test.cc
+  sanitizer_ioctl_test.cc
   sanitizer_libc_test.cc
   sanitizer_linux_test.cc
   sanitizer_list_test.cc

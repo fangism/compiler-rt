@@ -253,7 +253,6 @@ static void MlockIsUnsupported() {
   Printf("INFO: AddressSanitizer ignores mlock/mlockall/munlock/munlockall\n");
 }
 
-extern "C" {
 INTERCEPTOR(int, mlock, const void *addr, uptr len) {
   MlockIsUnsupported();
   return 0;
@@ -273,7 +272,6 @@ INTERCEPTOR(int, munlockall, void) {
   MlockIsUnsupported();
   return 0;
 }
-}  // extern "C"
 
 static inline int CharCmp(unsigned char c1, unsigned char c2) {
   return (c1 == c2) ? 0 : (c1 < c2) ? -1 : 1;
@@ -464,21 +462,16 @@ INTERCEPTOR(char*, strcpy, char *to, const char *from) {  // NOLINT
 
 #if ASAN_INTERCEPT_STRDUP
 INTERCEPTOR(char*, strdup, const char *s) {
-#if SANITIZER_MAC
-  // FIXME: because internal_strdup() uses InternalAlloc(), which currently
-  // just calls malloc() on Mac, we can't use internal_strdup() with the
-  // dynamic runtime. We can remove the call to REAL(strdup) once InternalAlloc
-  // starts using mmap() instead.
-  // See also http://code.google.com/p/address-sanitizer/issues/detail?id=123.
-  if (!asan_inited) return REAL(strdup)(s);
-#endif
   if (!asan_inited) return internal_strdup(s);
   ENSURE_ASAN_INITED();
+  uptr length = REAL(strlen)(s);
   if (flags()->replace_str) {
-    uptr length = REAL(strlen)(s);
     ASAN_READ_RANGE(s, length + 1);
   }
-  return REAL(strdup)(s);
+  GET_STACK_TRACE_MALLOC;
+  void *new_mem = asan_malloc(length + 1, &stack);
+  REAL(memcpy)(new_mem, s, length + 1);
+  return reinterpret_cast<char*>(new_mem);
 }
 #endif
 

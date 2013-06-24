@@ -42,6 +42,7 @@ namespace __sanitizer {
   extern unsigned struct_dirent_sz;
   extern unsigned struct_statfs_sz;
   extern unsigned struct_epoll_event_sz;
+  extern unsigned struct_sysinfo_sz;
   extern unsigned struct_timespec_sz;
 #endif // SANITIZER_LINUX
 
@@ -112,6 +113,8 @@ namespace __sanitizer {
   extern int e_tabsz;
 #endif
 
+  extern int af_inet;
+  extern int af_inet6;
   uptr __sanitizer_in_addr_sz(int af);
 
 #if SANITIZER_LINUX
@@ -154,7 +157,13 @@ namespace __sanitizer {
     union {
       void *ifcu_req;
     } ifc_ifcu;
+#if SANITIZER_MAC
+  } __attribute__((packed));
+#else
   };
+#endif
+
+#define IOC_SIZE(nr) (((nr) >> 16) & 0x3fff)
 
   extern unsigned struct_arpreq_sz;
   extern unsigned struct_ifreq_sz;
@@ -173,6 +182,7 @@ namespace __sanitizer {
   extern unsigned struct_copr_buffer_sz;
   extern unsigned struct_copr_debug_buf_sz;
   extern unsigned struct_copr_msg_sz;
+  extern unsigned struct_ff_effect_sz;
   extern unsigned struct_floppy_drive_params_sz;
   extern unsigned struct_floppy_drive_struct_sz;
   extern unsigned struct_floppy_fdc_state_sz;
@@ -183,6 +193,8 @@ namespace __sanitizer {
   extern unsigned struct_format_descr_sz;
   extern unsigned struct_hd_driveid_sz;
   extern unsigned struct_hd_geometry_sz;
+  extern unsigned struct_input_absinfo_sz;
+  extern unsigned struct_input_id_sz;
   extern unsigned struct_midi_info_sz;
   extern unsigned struct_mtget_sz;
   extern unsigned struct_mtop_sz;
@@ -199,15 +211,16 @@ namespace __sanitizer {
 #endif
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
+  extern unsigned mpu_command_rec_sz;
   extern unsigned struct_audio_buf_info_sz;
   extern unsigned struct_ax25_parms_struct_sz;
   extern unsigned struct_cyclades_monitor_sz;
+  extern unsigned struct_input_keymap_entry_sz;
   extern unsigned struct_ipx_config_data_sz;
   extern unsigned struct_kbdiacrs_sz;
   extern unsigned struct_kbentry_sz;
   extern unsigned struct_kbkeycode_sz;
   extern unsigned struct_kbsentry_sz;
-  extern unsigned mpu_command_rec_sz;
   extern unsigned struct_mtconfiginfo_sz;
   extern unsigned struct_nr_parms_struct_sz;
   extern unsigned struct_ppp_stats_sz;
@@ -226,6 +239,11 @@ namespace __sanitizer {
 #endif
 
   // ioctl request identifiers
+
+  // A special value to mark ioctls that are not present on the target platform,
+  // when it can not be determined without including any system headers.
+  extern unsigned IOCTL_NOT_PRESENT;
+
   extern unsigned IOCTL_FIOASYNC;
   extern unsigned IOCTL_FIOCLEX;
   extern unsigned IOCTL_FIOGETOWN;
@@ -275,6 +293,26 @@ namespace __sanitizer {
   extern unsigned IOCTL_SIOCGETVIFCNT;
 #endif
 #if SANITIZER_LINUX
+  extern unsigned IOCTL_EVIOCGABS;
+  extern unsigned IOCTL_EVIOCGBIT;
+  extern unsigned IOCTL_EVIOCGEFFECTS;
+  extern unsigned IOCTL_EVIOCGID;
+  extern unsigned IOCTL_EVIOCGKEY;
+  extern unsigned IOCTL_EVIOCGKEYCODE;
+  extern unsigned IOCTL_EVIOCGLED;
+  extern unsigned IOCTL_EVIOCGNAME;
+  extern unsigned IOCTL_EVIOCGPHYS;
+  extern unsigned IOCTL_EVIOCGRAB;
+  extern unsigned IOCTL_EVIOCGREP;
+  extern unsigned IOCTL_EVIOCGSND;
+  extern unsigned IOCTL_EVIOCGSW;
+  extern unsigned IOCTL_EVIOCGUNIQ;
+  extern unsigned IOCTL_EVIOCGVERSION;
+  extern unsigned IOCTL_EVIOCRMFF;
+  extern unsigned IOCTL_EVIOCSABS;
+  extern unsigned IOCTL_EVIOCSFF;
+  extern unsigned IOCTL_EVIOCSKEYCODE;
+  extern unsigned IOCTL_EVIOCSREP;
   extern unsigned IOCTL_BLKFLSBUF;
   extern unsigned IOCTL_BLKGETSIZE;
   extern unsigned IOCTL_BLKRAGET;
@@ -530,6 +568,9 @@ namespace __sanitizer {
   extern unsigned IOCTL_EQL_GETSLAVECFG;
   extern unsigned IOCTL_EQL_SETMASTRCFG;
   extern unsigned IOCTL_EQL_SETSLAVECFG;
+  extern unsigned IOCTL_EVIOCGKEYCODE_V2;
+  extern unsigned IOCTL_EVIOCGPROP;
+  extern unsigned IOCTL_EVIOCSKEYCODE_V2;
   extern unsigned IOCTL_FS_IOC_GETFLAGS;
   extern unsigned IOCTL_FS_IOC_GETVERSION;
   extern unsigned IOCTL_FS_IOC_SETFLAGS;

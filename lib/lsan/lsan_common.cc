@@ -23,8 +23,11 @@
 #if CAN_SANITIZE_LEAKS
 namespace __lsan {
 
-// This mutex is used to prevent races between DoLeakCheck and SuppressObject.
+// This mutex is used to prevent races between DoLeakCheck and IgnoreObject.
 BlockingMutex global_mutex(LINKER_INITIALIZED);
+
+THREADLOCAL int disable_counter;
+bool DisabledInThisThread() { return disable_counter > 0; }
 
 Flags lsan_flags;
 
@@ -81,12 +84,12 @@ static inline bool CanBeAHeapPointer(uptr p) {
 #endif
 }
 
-// Scan the memory range, looking for byte patterns that point into allocator
-// chunks. Mark those chunks with tag and add them to the frontier.
-// There are two usage modes for this function: finding reachable or suppressed
-// chunks (tag = kReachable or kIgnored) and finding indirectly leaked chunks
-// (tag = kIndirectlyLeaked). In the second case, there's no flood fill,
-// so frontier = 0.
+// Scans the memory range, looking for byte patterns that point into allocator
+// chunks. Marks those chunks with |tag| and adds them to |frontier|.
+// There are two usage modes for this function: finding reachable or ignored
+// chunks (|tag| = kReachable or kIgnored) and finding indirectly leaked chunks
+// (|tag| = kIndirectlyLeaked). In the second case, there's no flood fill,
+// so |frontier| = 0.
 void ScanRangeForPointers(uptr begin, uptr end,
                           Frontier *frontier,
                           const char *region_type, ChunkTag tag) {
@@ -96,26 +99,25 @@ void ScanRangeForPointers(uptr begin, uptr end,
   uptr pp = begin;
   if (pp % alignment)
     pp = pp + alignment - pp % alignment;
-  for (; pp + sizeof(uptr) <= end; pp += alignment) {
+  for (; pp + sizeof(void *) <= end; pp += alignment) {  // NOLINT
     void *p = *reinterpret_cast<void**>(pp);
     if (!CanBeAHeapPointer(reinterpret_cast<uptr>(p))) continue;
-    void *chunk = PointsIntoChunk(p);
+    uptr chunk = PointsIntoChunk(p);
     if (!chunk) continue;
     LsanMetadata m(chunk);
-    // Reachable beats suppressed beats leaked.
+    // Reachable beats ignored beats leaked.
     if (m.tag() == kReachable) continue;
     if (m.tag() == kIgnored && tag != kReachable) continue;
     m.set_tag(tag);
     if (flags()->log_pointers)
-      Report("%p: found %p pointing into chunk %p-%p of size %llu.\n", pp, p,
-             chunk, reinterpret_cast<uptr>(chunk) + m.requested_size(),
-             m.requested_size());
+      Report("%p: found %p pointing into chunk %p-%p of size %zu.\n", pp, p,
+             chunk, chunk + m.requested_size(), m.requested_size());
     if (frontier)
-      frontier->push_back(reinterpret_cast<uptr>(chunk));
+      frontier->push_back(chunk);
   }
 }
 
-// Scan thread data (stacks and TLS) for heap pointers.
+// Scans thread data (stacks and TLS) for heap pointers.
 static void ProcessThreads(SuspendedThreadsList const &suspended_threads,
                            Frontier *frontier) {
   InternalScopedBuffer<uptr> registers(SuspendedThreadsList::RegisterCount());
@@ -188,31 +190,34 @@ static void FloodFillTag(Frontier *frontier, ChunkTag tag) {
   while (frontier->size()) {
     uptr next_chunk = frontier->back();
     frontier->pop_back();
-    LsanMetadata m(reinterpret_cast<void *>(next_chunk));
+    LsanMetadata m(next_chunk);
     ScanRangeForPointers(next_chunk, next_chunk + m.requested_size(), frontier,
                          "HEAP", tag);
   }
 }
 
-// Mark leaked chunks which are reachable from other leaked chunks.
-void MarkIndirectlyLeakedCb::operator()(void *p) const {
-  p = GetUserBegin(p);
-  LsanMetadata m(p);
+// ForEachChunk callback. If the chunk is marked as leaked, marks all chunks
+// which are reachable from it as indirectly leaked.
+static void MarkIndirectlyLeakedCb(uptr chunk, void *arg) {
+  chunk = GetUserBegin(chunk);
+  LsanMetadata m(chunk);
   if (m.allocated() && m.tag() != kReachable) {
-    ScanRangeForPointers(reinterpret_cast<uptr>(p),
-                         reinterpret_cast<uptr>(p) + m.requested_size(),
+    ScanRangeForPointers(chunk, chunk + m.requested_size(),
                          /* frontier */ 0, "HEAP", kIndirectlyLeaked);
   }
 }
 
-void CollectSuppressedCb::operator()(void *p) const {
-  p = GetUserBegin(p);
-  LsanMetadata m(p);
+// ForEachChunk callback. If chunk is marked as ignored, adds its address to
+// frontier.
+static void CollectIgnoredCb(uptr chunk, void *arg) {
+  CHECK(arg);
+  chunk = GetUserBegin(chunk);
+  LsanMetadata m(chunk);
   if (m.allocated() && m.tag() == kIgnored)
-    frontier_->push_back(reinterpret_cast<uptr>(p));
+    reinterpret_cast<Frontier *>(arg)->push_back(chunk);
 }
 
-// Set the appropriate tag on each chunk.
+// Sets the appropriate tag on each chunk.
 static void ClassifyAllChunks(SuspendedThreadsList const &suspended_threads) {
   // Holds the flood fill frontier.
   Frontier frontier(GetPageSizeCached());
@@ -230,14 +235,14 @@ static void ClassifyAllChunks(SuspendedThreadsList const &suspended_threads) {
   if (flags()->log_pointers)
     Report("Scanning ignored chunks.\n");
   CHECK_EQ(0, frontier.size());
-  ForEachChunk(CollectSuppressedCb(&frontier));
+  ForEachChunk(CollectIgnoredCb, &frontier);
   FloodFillTag(&frontier, kIgnored);
 
   // Iterate over leaked chunks and mark those that are reachable from other
   // leaked chunks.
   if (flags()->log_pointers)
     Report("Scanning leaked chunks.\n");
-  ForEachChunk(MarkIndirectlyLeakedCb());
+  ForEachChunk(MarkIndirectlyLeakedCb, 0 /* arg */);
 }
 
 static void PrintStackTraceById(u32 stack_trace_id) {
@@ -248,9 +253,12 @@ static void PrintStackTraceById(u32 stack_trace_id) {
                          common_flags()->strip_path_prefix, 0);
 }
 
-void CollectLeaksCb::operator()(void *p) const {
-  p = GetUserBegin(p);
-  LsanMetadata m(p);
+// ForEachChunk callback. Aggregates unreachable chunks into a LeakReport.
+static void CollectLeaksCb(uptr chunk, void *arg) {
+  CHECK(arg);
+  LeakReport *leak_report = reinterpret_cast<LeakReport *>(arg);
+  chunk = GetUserBegin(chunk);
+  LsanMetadata m(chunk);
   if (!m.allocated()) return;
   if (m.tag() == kDirectlyLeaked || m.tag() == kIndirectlyLeaked) {
     uptr resolution = flags()->resolution;
@@ -258,62 +266,47 @@ void CollectLeaksCb::operator()(void *p) const {
       uptr size = 0;
       const uptr *trace = StackDepotGet(m.stack_trace_id(), &size);
       size = Min(size, resolution);
-      leak_report_->Add(StackDepotPut(trace, size), m.requested_size(),
-                        m.tag());
+      leak_report->Add(StackDepotPut(trace, size), m.requested_size(), m.tag());
     } else {
-      leak_report_->Add(m.stack_trace_id(), m.requested_size(), m.tag());
+      leak_report->Add(m.stack_trace_id(), m.requested_size(), m.tag());
     }
   }
 }
 
-static void CollectLeaks(LeakReport *leak_report) {
-  ForEachChunk(CollectLeaksCb(leak_report));
-}
-
-void PrintLeakedCb::operator()(void *p) const {
-  p = GetUserBegin(p);
-  LsanMetadata m(p);
+// ForEachChunkCallback. Prints addresses of unreachable chunks.
+static void PrintLeakedCb(uptr chunk, void *arg) {
+  chunk = GetUserBegin(chunk);
+  LsanMetadata m(chunk);
   if (!m.allocated()) return;
   if (m.tag() == kDirectlyLeaked || m.tag() == kIndirectlyLeaked) {
-    Printf("%s leaked %llu byte object at %p\n",
+    Printf("%s leaked %zu byte object at %p.\n",
            m.tag() == kDirectlyLeaked ? "Directly" : "Indirectly",
-           m.requested_size(), p);
+           m.requested_size(), chunk);
   }
 }
 
 static void PrintLeaked() {
-  Printf("Reporting individual objects:\n");
-  Printf("============================\n");
-  ForEachChunk(PrintLeakedCb());
   Printf("\n");
+  Printf("Reporting individual objects:\n");
+  ForEachChunk(PrintLeakedCb, 0 /* arg */);
 }
 
-enum LeakCheckResult {
-  kFatalError,
-  kLeaksFound,
-  kNoLeaks
+struct DoLeakCheckParam {
+  bool success;
+  LeakReport leak_report;
 };
 
 static void DoLeakCheckCallback(const SuspendedThreadsList &suspended_threads,
                                 void *arg) {
-  LeakCheckResult *result = reinterpret_cast<LeakCheckResult *>(arg);
-  CHECK_EQ(*result, kFatalError);
+  DoLeakCheckParam *param = reinterpret_cast<DoLeakCheckParam *>(arg);
+  CHECK(param);
+  CHECK(!param->success);
+  CHECK(param->leak_report.IsEmpty());
   ClassifyAllChunks(suspended_threads);
-  LeakReport leak_report;
-  CollectLeaks(&leak_report);
-  if (leak_report.IsEmpty()) {
-    *result = kNoLeaks;
-    return;
-  }
-  Printf("\n");
-  Printf("=================================================================\n");
-  Report("ERROR: LeakSanitizer: detected memory leaks\n");
-  leak_report.PrintLargest(flags()->max_leaks);
-  if (flags()->report_objects)
+  ForEachChunk(CollectLeaksCb, &param->leak_report);
+  if (!param->leak_report.IsEmpty() && flags()->report_objects)
     PrintLeaked();
-  leak_report.PrintSummary();
-  Printf("\n");
-  *result = kLeaksFound;
+  param->success = true;
 }
 
 void DoLeakCheck() {
@@ -321,16 +314,25 @@ void DoLeakCheck() {
   static bool already_done;
   CHECK(!already_done);
   already_done = true;
-  LeakCheckResult result = kFatalError;
+
+  DoLeakCheckParam param;
+  param.success = false;
   LockThreadRegistry();
   LockAllocator();
-  StopTheWorld(DoLeakCheckCallback, &result);
+  StopTheWorld(DoLeakCheckCallback, &param);
   UnlockAllocator();
   UnlockThreadRegistry();
-  if (result == kFatalError) {
+
+  if (!param.success) {
     Report("LeakSanitizer has encountered a fatal error.\n");
     Die();
-  } else if (result == kLeaksFound) {
+  }
+  if (!param.leak_report.IsEmpty()) {
+    Printf("\n================================================================="
+           "\n");
+    Report("ERROR: LeakSanitizer: detected memory leaks\n");
+    param.leak_report.PrintLargest(flags()->max_leaks);
+    param.leak_report.PrintSummary();
     if (flags()->exitcode)
       internal__exit(flags()->exitcode);
   }
@@ -369,15 +371,15 @@ void LeakReport::PrintLargest(uptr max_leaks) {
   CHECK(leaks_.size() <= kMaxLeaksConsidered);
   Printf("\n");
   if (leaks_.size() == kMaxLeaksConsidered)
-    Printf("Too many leaks! Only the first %llu leaks encountered will be "
+    Printf("Too many leaks! Only the first %zu leaks encountered will be "
            "reported.\n",
            kMaxLeaksConsidered);
   if (max_leaks > 0 && max_leaks < leaks_.size())
-    Printf("The %llu largest leak(s):\n", max_leaks);
+    Printf("The %zu largest leak(s):\n", max_leaks);
   InternalSort(&leaks_, leaks_.size(), IsLarger);
   max_leaks = max_leaks > 0 ? Min(max_leaks, leaks_.size()) : leaks_.size();
   for (uptr i = 0; i < max_leaks; i++) {
-    Printf("%s leak of %llu byte(s) in %llu object(s) allocated from:\n",
+    Printf("%s leak of %zu byte(s) in %zu object(s) allocated from:\n",
            leaks_[i].is_directly_leaked ? "Direct" : "Indirect",
            leaks_[i].total_size, leaks_[i].hit_count);
     PrintStackTraceById(leaks_[i].stack_trace_id);
@@ -385,7 +387,7 @@ void LeakReport::PrintLargest(uptr max_leaks) {
   }
   if (max_leaks < leaks_.size()) {
     uptr remaining = leaks_.size() - max_leaks;
-    Printf("Omitting %llu more leak(s).\n", remaining);
+    Printf("Omitting %zu more leak(s).\n", remaining);
   }
 }
 
@@ -396,17 +398,19 @@ void LeakReport::PrintSummary() {
       bytes += leaks_[i].total_size;
       allocations += leaks_[i].hit_count;
   }
-  Printf("SUMMARY: LeakSanitizer: %llu byte(s) leaked in %llu allocation(s).\n",
-         bytes, allocations);
+  Printf(
+      "SUMMARY: LeakSanitizer: %zu byte(s) leaked in %zu allocation(s).\n\n",
+      bytes, allocations);
 }
-
 }  // namespace __lsan
+#endif  // CAN_SANITIZE_LEAKS
 
 using namespace __lsan;  // NOLINT
 
 extern "C" {
 SANITIZER_INTERFACE_ATTRIBUTE
 void __lsan_ignore_object(const void *p) {
+#if CAN_SANITIZE_LEAKS
   // Cannot use PointsIntoChunk or LsanMetadata here, since the allocator is not
   // locked.
   BlockingMutexLock l(&global_mutex);
@@ -418,6 +422,24 @@ void __lsan_ignore_object(const void *p) {
            "heap object at %p is already being ignored\n", p);
   if (res == kIgnoreObjectSuccess && flags()->verbosity >= 2)
     Report("__lsan_ignore_object(): ignoring heap object at %p\n", p);
+#endif  // CAN_SANITIZE_LEAKS
+}
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_disable() {
+#if CAN_SANITIZE_LEAKS
+  __lsan::disable_counter++;
+#endif
+}
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_enable() {
+#if CAN_SANITIZE_LEAKS
+  if (!__lsan::disable_counter) {
+    Report("Unmatched call to __lsan_enable().\n");
+    Die();
+  }
+  __lsan::disable_counter--;
+#endif
 }
 }  // extern "C"
-#endif  // CAN_SANITIZE_LEAKS

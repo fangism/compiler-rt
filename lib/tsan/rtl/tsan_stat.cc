@@ -229,11 +229,13 @@ void StatOutput(u64 *stat) {
   name[StatInt_pread]                    = "  pread                           ";
   name[StatInt_pread64]                  = "  pread64                         ";
   name[StatInt_readv]                    = "  readv                           ";
+  name[StatInt_preadv]                   = "  preadv                          ";
   name[StatInt_preadv64]                 = "  preadv64                        ";
   name[StatInt_write]                    = "  write                           ";
   name[StatInt_pwrite]                   = "  pwrite                          ";
   name[StatInt_pwrite64]                 = "  pwrite64                        ";
   name[StatInt_writev]                   = "  writev                          ";
+  name[StatInt_pwritev]                  = "  pwritev                         ";
   name[StatInt_pwritev64]                = "  pwritev64                       ";
   name[StatInt_send]                     = "  send                            ";
   name[StatInt_sendmsg]                  = "  sendmsg                         ";
@@ -311,6 +313,7 @@ void StatOutput(u64 *stat) {
   name[StatInt_wait4]                    = "  wait4                           ";
   name[StatInt_inet_ntop]                = "  inet_ntop                       ";
   name[StatInt_inet_pton]                = "  inet_pton                       ";
+  name[StatInt_inet_aton]                = "  inet_aton                       ";
   name[StatInt_getaddrinfo]              = "  getaddrinfo                     ";
   name[StatInt_getsockname]              = "  getsockname                     ";
   name[StatInt_gethostent]               = "  gethostent                      ";
@@ -327,6 +330,7 @@ void StatOutput(u64 *stat) {
   name[StatInt_modfl]                    = "  modfl                           ";
   name[StatInt_getpeername]              = "  getpeername                     ";
   name[StatInt_ioctl]                    = "  ioctl                           ";
+  name[StatInt_sysinfo]                  = "  sysinfo                         ";
 
   name[StatAnnotation]                   = "Dynamic annotations               ";
   name[StatAnnotateHappensBefore]        = "  HappensBefore                   ";

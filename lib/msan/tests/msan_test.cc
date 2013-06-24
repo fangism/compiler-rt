@@ -38,6 +38,7 @@
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <sys/ioctl.h>
+#include <sys/sysinfo.h>
 #include <sys/utsname.h>
 #include <sys/mman.h>
 #include <sys/vfs.h>
@@ -566,6 +567,52 @@ TEST(MemorySanitizer, pread) {
   delete x;
 }
 
+TEST(MemorySanitizer, readv) {
+  char buf[2011];
+  struct iovec iov[2];
+  iov[0].iov_base = buf + 1;
+  iov[0].iov_len = 5;
+  iov[1].iov_base = buf + 10;
+  iov[1].iov_len = 2000;
+  int fd = open("/proc/self/stat", O_RDONLY);
+  assert(fd > 0);
+  int sz = readv(fd, iov, 2);
+  ASSERT_LT(sz, 5 + 2000);
+  ASSERT_GT(sz, iov[0].iov_len);
+  EXPECT_POISONED(buf[0]);
+  EXPECT_NOT_POISONED(buf[1]);
+  EXPECT_NOT_POISONED(buf[5]);
+  EXPECT_POISONED(buf[6]);
+  EXPECT_POISONED(buf[9]);
+  EXPECT_NOT_POISONED(buf[10]);
+  EXPECT_NOT_POISONED(buf[10 + (sz - 1) - 5]);
+  EXPECT_POISONED(buf[11 + (sz - 1) - 5]);
+  close(fd);
+}
+
+TEST(MemorySanitizer, preadv) {
+  char buf[2011];
+  struct iovec iov[2];
+  iov[0].iov_base = buf + 1;
+  iov[0].iov_len = 5;
+  iov[1].iov_base = buf + 10;
+  iov[1].iov_len = 2000;
+  int fd = open("/proc/self/stat", O_RDONLY);
+  assert(fd > 0);
+  int sz = preadv(fd, iov, 2, 3);
+  ASSERT_LT(sz, 5 + 2000);
+  ASSERT_GT(sz, iov[0].iov_len);
+  EXPECT_POISONED(buf[0]);
+  EXPECT_NOT_POISONED(buf[1]);
+  EXPECT_NOT_POISONED(buf[5]);
+  EXPECT_POISONED(buf[6]);
+  EXPECT_POISONED(buf[9]);
+  EXPECT_NOT_POISONED(buf[10]);
+  EXPECT_NOT_POISONED(buf[10 + (sz - 1) - 5]);
+  EXPECT_POISONED(buf[11 + (sz - 1) - 5]);
+  close(fd);
+}
+
 // FIXME: fails now.
 TEST(MemorySanitizer, DISABLED_ioctl) {
   struct winsize ws;
@@ -1053,6 +1100,20 @@ TEST(MemorySanitizer, swprintf) {
   assert(buff[6] == '7');
   assert(buff[7] == 0);
   EXPECT_POISONED(buff[8]);
+}
+
+TEST(MemorySanitizer, asprintf) {  // NOLINT
+  char *pbuf;
+  EXPECT_POISONED(pbuf);
+  int res = asprintf(&pbuf, "%d", 1234567);  // NOLINT
+  assert(res == 7);
+  EXPECT_NOT_POISONED(pbuf);
+  assert(pbuf[0] == '1');
+  assert(pbuf[1] == '2');
+  assert(pbuf[2] == '3');
+  assert(pbuf[6] == '7');
+  assert(pbuf[7] == 0);
+  free(pbuf);
 }
 
 TEST(MemorySanitizer, wcstombs) {
@@ -1890,6 +1951,15 @@ TEST(MemorySanitizer, inet_pton) {
   EXPECT_NOT_POISONED(s_out[3]);
 }
 
+TEST(MemorySanitizer, inet_aton) {
+  const char *s = "127.0.0.1";
+  struct in_addr in[2];
+  int res = inet_aton(s, in);
+  ASSERT_NE(0, res);
+  EXPECT_NOT_POISONED(in[0]);
+  EXPECT_POISONED(*(char *)(in + 1));
+}
+
 TEST(MemorySanitizer, uname) {
   struct utsname u;
   int res = uname(&u);
@@ -1906,6 +1976,13 @@ TEST(MemorySanitizer, gethostname) {
   int res = gethostname(buf, 100);
   assert(!res);
   EXPECT_NOT_POISONED(strlen(buf));
+}
+
+TEST(MemorySanitizer, sysinfo) {
+  struct sysinfo info;
+  int res = sysinfo(&info);
+  assert(!res);
+  EXPECT_NOT_POISONED(info);
 }
 
 TEST(MemorySanitizer, getpwuid) {

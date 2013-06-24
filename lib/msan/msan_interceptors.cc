@@ -28,12 +28,6 @@
 // ACHTUNG! No other system header includes in this file.
 // Ideally, we should get rid of stdarg.h as well.
 
-extern "C" SANITIZER_WEAK_ATTRIBUTE const int __msan_keep_going;
-
-int __msan_get_keep_going() {
-  return &__msan_keep_going ? __msan_keep_going : 0;
-}
-
 using namespace __msan;
 
 // True if this is a nested interceptor.
@@ -56,22 +50,22 @@ bool IsInInterceptorScope() {
 } while (0)
 
 // Check that [x, x+n) range is unpoisoned.
-#define CHECK_UNPOISONED_0(x, n)                                              \
-  do {                                                                        \
-    sptr offset = __msan_test_shadow(x, n);                                   \
-    if (__msan::IsInSymbolizer()) break;                                      \
-    if (offset >= 0 && __msan::flags()->report_umrs) {                        \
-      GET_CALLER_PC_BP_SP;                                                    \
-      (void) sp;                                                              \
-      Printf("UMR in %s at offset %d inside [%p, +%d) \n", __FUNCTION__,      \
-             offset, x, n);                                                   \
-      __msan::PrintWarningWithOrigin(pc, bp,                                  \
-                                     __msan_get_origin((char *) x + offset)); \
-      if (!__msan_get_keep_going()) {                                         \
-        Printf("Exiting\n");                                                  \
-        Die();                                                                \
-      }                                                                       \
-    }                                                                         \
+#define CHECK_UNPOISONED_0(x, n)                                             \
+  do {                                                                       \
+    sptr offset = __msan_test_shadow(x, n);                                  \
+    if (__msan::IsInSymbolizer()) break;                                     \
+    if (offset >= 0 && __msan::flags()->report_umrs) {                       \
+      GET_CALLER_PC_BP_SP;                                                   \
+      (void) sp;                                                             \
+      Printf("UMR in %s at offset %d inside [%p, +%d) \n", __FUNCTION__,     \
+             offset, x, n);                                                  \
+      __msan::PrintWarningWithOrigin(pc, bp,                                 \
+                                     __msan_get_origin((char *)x + offset)); \
+      if (!__msan::flags()->keep_going) {                                    \
+        Printf("Exiting\n");                                                 \
+        Die();                                                               \
+      }                                                                      \
+    }                                                                        \
   } while (0)
 
 // Check that [x, x+n) range is unpoisoned unless we are in a nested
@@ -317,11 +311,30 @@ INTERCEPTOR(long double, strtold, const char *nptr, char **endptr) {  // NOLINT
   return res;
 }
 
+INTERCEPTOR(int, vasprintf, char **strp, const char *format, va_list ap) {
+  ENSURE_MSAN_INITED();
+  int res = REAL(vasprintf)(strp, format, ap);
+  if (res >= 0 && !__msan_has_dynamic_component()) {
+    __msan_unpoison(strp, sizeof(*strp));
+    __msan_unpoison(*strp, res + 1);
+  }
+  return res;
+}
+
+INTERCEPTOR(int, asprintf, char **strp, const char *format, ...) {  // NOLINT
+  ENSURE_MSAN_INITED();
+  va_list ap;
+  va_start(ap, format);
+  int res = vasprintf(strp, format, ap);  // NOLINT
+  va_end(ap);
+  return res;
+}
+
 INTERCEPTOR(int, vsnprintf, char *str, uptr size,
             const char *format, va_list ap) {
   ENSURE_MSAN_INITED();
   int res = REAL(vsnprintf)(str, size, format, ap);
-  if (!__msan_has_dynamic_component()) {
+  if (res >= 0 && !__msan_has_dynamic_component()) {
     __msan_unpoison(str, res + 1);
   }
   return res;
@@ -330,7 +343,7 @@ INTERCEPTOR(int, vsnprintf, char *str, uptr size,
 INTERCEPTOR(int, vsprintf, char *str, const char *format, va_list ap) {
   ENSURE_MSAN_INITED();
   int res = REAL(vsprintf)(str, format, ap);
-  if (!__msan_has_dynamic_component()) {
+  if (res >= 0 && !__msan_has_dynamic_component()) {
     __msan_unpoison(str, res + 1);
   }
   return res;
@@ -339,7 +352,7 @@ INTERCEPTOR(int, vsprintf, char *str, const char *format, va_list ap) {
 INTERCEPTOR(int, vswprintf, void *str, uptr size, void *format, va_list ap) {
   ENSURE_MSAN_INITED();
   int res = REAL(vswprintf)(str, size, format, ap);
-  if (!__msan_has_dynamic_component()) {
+  if (res >= 0 && !__msan_has_dynamic_component()) {
     __msan_unpoison(str, 4 * (res + 1));
   }
   return res;
@@ -875,6 +888,7 @@ static void SignalHandler(int signo) {
 }
 
 static void SignalAction(int signo, void *si, void *uc) {
+  __msan_unpoison_param(3);
   __msan_unpoison(si, __sanitizer::struct_sigaction_sz);
   __msan_unpoison(uc, __sanitizer::ucontext_t_sz);
 
@@ -1150,6 +1164,8 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(strtod);
   INTERCEPT_FUNCTION(strtof);
   INTERCEPT_FUNCTION(strtold);
+  INTERCEPT_FUNCTION(vasprintf);
+  INTERCEPT_FUNCTION(asprintf);
   INTERCEPT_FUNCTION(vsprintf);
   INTERCEPT_FUNCTION(vsnprintf);
   INTERCEPT_FUNCTION(vswprintf);
