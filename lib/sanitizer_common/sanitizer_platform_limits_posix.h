@@ -155,9 +155,14 @@ namespace __sanitizer {
   struct __sanitizer_ifconf {
     int ifc_len;
     union {
+// on darwin8, <net/if.h> also has:
+//    caddr_t ifcu_buf;		// typedef char* caddr_t; // <sys/types.h>
+//    struct  ifreq *ifcu_req;
       void *ifcu_req;
     } ifc_ifcu;
-#if SANITIZER_MAC
+#if SANITIZER_MAC && (defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2))))
+// not on darwin8 <net/if.h>
+// kludge: use system gcc version to infer darwin version
   } __attribute__((packed));
 #else
   };
