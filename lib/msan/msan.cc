@@ -141,6 +141,7 @@ static void InitializeFlags(Flags *f, const char *options) {
   cf->fast_unwind_on_malloc = true;
   cf->malloc_context_size = 20;
   cf->handle_ioctl = true;
+  cf->log_path = 0;
 
   internal_memset(f, 0, sizeof(*f));
   f->poison_heap_with_zeroes = false;
@@ -220,6 +221,10 @@ void PrintWarningWithOrigin(uptr pc, uptr bp, u32 origin) {
   }
 }
 
+void UnpoisonParam(uptr n) {
+  internal_memset(__msan_param_tls, 0, n * sizeof(*__msan_param_tls));
+}
+
 }  // namespace __msan
 
 // Interface.
@@ -258,6 +263,7 @@ void __msan_init() {
     ReplaceOperatorsNewAndDelete();
   const char *msan_options = GetEnv("MSAN_OPTIONS");
   InitializeFlags(&msan_flags, msan_options);
+  __sanitizer_set_report_path(common_flags()->log_path);
   if (StackSizeIsUnlimited()) {
     if (flags()->verbosity)
       Printf("Unlimited stack, doing reexec\n");
@@ -343,10 +349,6 @@ void __msan_print_param_shadow() {
     Printf("#%d:%zx ", i, __msan_param_tls[i]);
   }
   Printf("\n");
-}
-
-void __msan_unpoison_param(uptr n) {
-  internal_memset(__msan_param_tls, 0, n * sizeof(*__msan_param_tls));
 }
 
 sptr __msan_test_shadow(const void *x, uptr size) {

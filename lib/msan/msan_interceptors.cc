@@ -101,20 +101,6 @@ INTERCEPTOR(SSIZE_T, readlink, const char *path, char *buf, SIZE_T bufsiz) {
   return res;
 }
 
-INTERCEPTOR(void *, readdir, void *a) {
-  ENSURE_MSAN_INITED();
-  void *res = REAL(readdir)(a);
-  __msan_unpoison(res, __sanitizer::struct_dirent_sz);
-  return res;
-}
-
-INTERCEPTOR(void *, readdir64, void *a) {
-  ENSURE_MSAN_INITED();
-  void *res = REAL(readdir)(a);
-  __msan_unpoison(res, __sanitizer::struct_dirent64_sz);
-  return res;
-}
-
 INTERCEPTOR(void *, memcpy, void *dest, const void *src, SIZE_T n) {
   return __msan_memcpy(dest, src, n);
 }
@@ -853,7 +839,7 @@ static int msan_dl_iterate_phdr_cb(__sanitizer_dl_phdr_info *info, SIZE_T size,
       __msan_unpoison(info->dlpi_name, REAL(strlen)(info->dlpi_name) + 1);
   }
   dl_iterate_phdr_data *cbdata = (dl_iterate_phdr_data *)data;
-  __msan_unpoison_param(3);
+  UnpoisonParam(3);
   return cbdata->callback(info, size, cbdata->data);
 }
 
@@ -888,7 +874,7 @@ static void SignalHandler(int signo) {
 }
 
 static void SignalAction(int signo, void *si, void *uc) {
-  __msan_unpoison_param(3);
+  UnpoisonParam(3);
   __msan_unpoison(si, __sanitizer::struct_sigaction_sz);
   __msan_unpoison(uc, __sanitizer::ucontext_t_sz);
 
@@ -1138,8 +1124,6 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(fread);
   INTERCEPT_FUNCTION(fread_unlocked);
   INTERCEPT_FUNCTION(readlink);
-  INTERCEPT_FUNCTION(readdir);
-  INTERCEPT_FUNCTION(readdir64);
   INTERCEPT_FUNCTION(memcpy);
   INTERCEPT_FUNCTION(memset);
   INTERCEPT_FUNCTION(memmove);

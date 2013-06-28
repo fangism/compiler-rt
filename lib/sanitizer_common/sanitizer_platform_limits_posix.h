@@ -39,7 +39,6 @@ namespace __sanitizer {
 
 #if SANITIZER_LINUX
   extern unsigned struct_rlimit_sz;
-  extern unsigned struct_dirent_sz;
   extern unsigned struct_statfs_sz;
   extern unsigned struct_epoll_event_sz;
   extern unsigned struct_sysinfo_sz;
@@ -47,7 +46,6 @@ namespace __sanitizer {
 #endif // SANITIZER_LINUX
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
-  extern unsigned struct_dirent64_sz;
   extern unsigned struct_rlimit64_sz;
   extern unsigned struct_statfs64_sz;
 #endif // SANITIZER_LINUX && !SANITIZER_ANDROID
@@ -86,6 +84,37 @@ namespace __sanitizer {
     uptr cmsg_len;
     int cmsg_level;
     int cmsg_type;
+  };
+#endif
+
+#if SANITIZER_MAC
+  struct __sanitizer_dirent {
+    unsigned d_ino;
+    unsigned short d_reclen;
+    // more fields that we don't care about
+  };
+#elif SANITIZER_ANDROID
+  struct __sanitizer_dirent {
+    unsigned long long d_ino;
+    unsigned long long d_off;
+    unsigned short d_reclen;
+    // more fields that we don't care about
+  };
+#else
+  struct __sanitizer_dirent {
+    uptr d_ino;
+    uptr d_off;
+    unsigned short d_reclen;
+    // more fields that we don't care about
+  };
+#endif
+
+#if SANITIZER_LINUX && !SANITIZER_ANDROID
+  struct __sanitizer_dirent64 {
+    uptr d_ino;
+    uptr d_off;
+    unsigned short d_reclen;
+    // more fields that we don't care about
   };
 #endif
 
@@ -216,7 +245,6 @@ namespace __sanitizer {
 #endif
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
-  extern unsigned mpu_command_rec_sz;
   extern unsigned struct_audio_buf_info_sz;
   extern unsigned struct_ax25_parms_struct_sz;
   extern unsigned struct_cyclades_monitor_sz;
@@ -446,7 +474,6 @@ namespace __sanitizer {
   extern unsigned IOCTL_SNDCTL_FM_4OP_ENABLE;
   extern unsigned IOCTL_SNDCTL_FM_LOAD_INSTR;
   extern unsigned IOCTL_SNDCTL_MIDI_INFO;
-  extern unsigned IOCTL_SNDCTL_MIDI_MPUMODE;
   extern unsigned IOCTL_SNDCTL_MIDI_PRETIME;
   extern unsigned IOCTL_SNDCTL_SEQ_CTRLRATE;
   extern unsigned IOCTL_SNDCTL_SEQ_GETINCOUNT;

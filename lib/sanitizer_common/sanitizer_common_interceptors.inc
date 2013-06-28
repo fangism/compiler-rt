@@ -1208,7 +1208,8 @@ INTERCEPTOR(long double, modfl, long double x, long double *iptr) {
 #endif
 
 #if SANITIZER_INTERCEPT_RECVMSG
-static void write_msghdr(void *ctx, struct __sanitizer_msghdr *msg, SSIZE_T maxlen) {
+static void write_msghdr(void *ctx, struct __sanitizer_msghdr *msg,
+                         SSIZE_T maxlen) {
   COMMON_INTERCEPTOR_WRITE_RANGE(ctx, msg, sizeof(*msg));
   if (msg->msg_name)
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, msg->msg_name,
@@ -1267,6 +1268,66 @@ INTERCEPTOR(int, sysinfo, void *info) {
 #define INIT_SYSINFO
 #endif
 
+#if SANITIZER_INTERCEPT_READDIR
+INTERCEPTOR(__sanitizer_dirent *, readdir, void *dirp) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, readdir, dirp);
+  __sanitizer_dirent *res = REAL(readdir)(dirp);
+  if (res)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, res->d_reclen);
+  return res;
+}
+
+INTERCEPTOR(int, readdir_r, void *dirp, __sanitizer_dirent *entry, __sanitizer_dirent **result) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, readdir_r, dirp, entry, result);
+  int res = REAL(readdir_r)(dirp, entry, result);
+  if (!res) {
+    if (result)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, result, sizeof(*result));
+    if (entry)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, entry, entry->d_reclen);
+  }
+  return res;
+}
+
+#define INIT_READDIR           \
+  INTERCEPT_FUNCTION(readdir); \
+  INTERCEPT_FUNCTION(readdir_r);
+#else
+#define INIT_READDIR
+#endif
+
+#if SANITIZER_INTERCEPT_READDIR64
+INTERCEPTOR(__sanitizer_dirent64 *, readdir64, void *dirp) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, readdir64, dirp);
+  __sanitizer_dirent64 *res = REAL(readdir64)(dirp);
+  if (res)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, res->d_reclen);
+  return res;
+}
+
+INTERCEPTOR(int, readdir64_r, void *dirp, __sanitizer_dirent64 *entry, __sanitizer_dirent64 **result) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, readdir64_r, dirp, entry, result);
+  int res = REAL(readdir64_r)(dirp, entry, result);
+  if (!res) {
+    if (result)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, result, sizeof(*result));
+    if (entry)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, entry, entry->d_reclen);
+  }
+  return res;
+}
+#define INIT_READDIR64           \
+  INTERCEPT_FUNCTION(readdir64); \
+  INTERCEPT_FUNCTION(readdir64_r);
+#else
+#define INIT_READDIR64
+#endif
+
+
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_STRCASECMP;                         \
   INIT_STRNCASECMP;                        \
@@ -1308,4 +1369,6 @@ INTERCEPTOR(int, sysinfo, void *info) {
   INIT_GETPEERNAME;                        \
   INIT_IOCTL;                              \
   INIT_INET_ATON;                          \
-  INIT_SYSINFO;
+  INIT_SYSINFO;                            \
+  INIT_READDIR;                            \
+  INIT_READDIR64;
