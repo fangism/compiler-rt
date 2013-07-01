@@ -56,9 +56,9 @@ void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   *bp = ucontext->uc_mcontext->__ss.__rbp;
   *sp = ucontext->uc_mcontext->__ss.__rsp;
 # else
-  *pc = ucontext->uc_mcontext->__ss.__eip;
-  *bp = ucontext->uc_mcontext->__ss.__ebp;
-  *sp = ucontext->uc_mcontext->__ss.__esp;
+  *pc = ucontext->uc_mcontext->ss.eip;
+  *bp = ucontext->uc_mcontext->ss.ebp;
+  *sp = ucontext->uc_mcontext->ss.esp;
 # endif  // SANITIZER_WORDSIZE
 #endif
 }
