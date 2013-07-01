@@ -189,9 +189,10 @@ namespace __sanitizer {
 //    struct  ifreq *ifcu_req;
       void *ifcu_req;
     } ifc_ifcu;
-#if SANITIZER_MAC && (defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2))))
+#if SANITIZER_MAC && !(defined(__ppc__) || defined(__powerpc__) || defined(__POWERPC__))
 // not on darwin8 <net/if.h>
 // kludge: use system gcc version to infer darwin version
+// but also don't want stage-2 to apply attribute either
   } __attribute__((packed));
 #else
   };
