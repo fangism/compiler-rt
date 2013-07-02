@@ -43,16 +43,12 @@ set(COMPILER_RT_LINUX_SDK_SYSROOT ${COMPILER_RT_SOURCE_DIR}/SDKs/linux)
 
 # Detect whether the current target platform is 32-bit or 64-bit, and setup
 # the correct commandline flags needed to attempt to target 32-bit and 64-bit.
-if(CMAKE_SIZEOF_VOID_P EQUAL 4 OR LLVM_BUILD_32_BITS)
-  set(TARGET_64_BIT_CFLAGS "-m64")
-  set(TARGET_32_BIT_CFLAGS "")
-else()
-  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "Please use a sane architecture with 4 or 8 byte pointers.")
-  endif()
-  set(TARGET_64_BIT_CFLAGS "")
-  set(TARGET_32_BIT_CFLAGS "-m32")
+if (NOT CMAKE_SIZEOF_VOID_P EQUAL 4 AND
+    NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+  message(FATAL_ERROR "Please use architecture with 4 or 8 byte pointers.")
 endif()
+set(TARGET_64_BIT_CFLAGS "-m64")
+set(TARGET_32_BIT_CFLAGS "-m32")
 
 # List of architectures we can target.
 set(COMPILER_RT_SUPPORTED_ARCH)
@@ -92,8 +88,8 @@ if("${LLVM_NATIVE_ARCH}" STREQUAL "X86")
 elseif("${LLVM_NATIVE_ARCH}" STREQUAL "PowerPC")
   # Explicitly set -m flag on powerpc, because on ppc64 defaults for gcc and
   # clang are different.
-  test_target_arch(ppc64 "-m64")
-  test_target_arch(ppc "-m32")
+  test_target_arch(ppc64 ${TARGET_64_BIT_CFLAGS})
+  test_target_arch(ppc ${TARGET_32_BIT_CFLAGS})
 endif()
 
 # We only support running instrumented tests when we're not cross compiling

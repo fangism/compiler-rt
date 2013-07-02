@@ -70,8 +70,10 @@ bool IsInInterceptorScope() {
 
 // Check that [x, x+n) range is unpoisoned unless we are in a nested
 // interceptor.
-#define CHECK_UNPOISONED(x, n) \
-  if (!IsInInterceptorScope()) CHECK_UNPOISONED_0(x, n);
+#define CHECK_UNPOISONED(x, n)                             \
+  do {                                                     \
+    if (!IsInInterceptorScope()) CHECK_UNPOISONED_0(x, n); \
+  } while (0);
 
 static void *fast_memset(void *ptr, int c, SIZE_T n);
 static void *fast_memcpy(void *dst, const void *src, SIZE_T n);
@@ -162,6 +164,14 @@ INTERCEPTOR(char *, strncpy, char *dest, const char *src, SIZE_T n) {  // NOLINT
     copy_size++;  // trailing \0
   char *res = REAL(strncpy)(dest, src, n);  // NOLINT
   __msan_copy_poison(dest, src, copy_size);
+  return res;
+}
+
+INTERCEPTOR(char *, stpcpy, char *dest, const char *src) {  // NOLINT
+  ENSURE_MSAN_INITED();
+  SIZE_T n = REAL(strlen)(src);
+  char *res = REAL(stpcpy)(dest, src);  // NOLINT
+  __msan_copy_poison(dest, src, n + 1);
   return res;
 }
 
@@ -969,14 +979,16 @@ struct MSanInterceptorContext {
 
 // A version of CHECK_UNPOISED using a saved scope value. Used in common
 // interceptors.
-#define CHECK_UNPOISONED_CTX(ctx, x, n)                        \
-  if (!((MSanInterceptorContext *) ctx)->in_interceptor_scope) \
-    CHECK_UNPOISONED_0(x, n);
+#define CHECK_UNPOISONED_CTX(ctx, x, n)                         \
+  do {                                                          \
+    if (!((MSanInterceptorContext *)ctx)->in_interceptor_scope) \
+      CHECK_UNPOISONED_0(x, n);                                 \
+  } while (0)
 
 #define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size) \
   __msan_unpoison(ptr, size)
 #define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size) \
-  CHECK_UNPOISONED_CTX(ctx, ptr, size);
+  CHECK_UNPOISONED_CTX(ctx, ptr, size)
 #define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)              \
   if (msan_init_is_running) return REAL(func)(__VA_ARGS__);   \
   MSanInterceptorContext msan_ctx = {IsInInterceptorScope()}; \
@@ -1131,6 +1143,7 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(wmemcpy);
   INTERCEPT_FUNCTION(wmemmove);
   INTERCEPT_FUNCTION(strcpy);  // NOLINT
+  INTERCEPT_FUNCTION(stpcpy);  // NOLINT
   INTERCEPT_FUNCTION(strdup);
   INTERCEPT_FUNCTION(__strdup);
   INTERCEPT_FUNCTION(strndup);

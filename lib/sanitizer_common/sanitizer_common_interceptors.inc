@@ -943,6 +943,29 @@ INTERCEPTOR(int, getaddrinfo, char *node, char *service,
 #define INIT_GETADDRINFO
 #endif
 
+#if SANITIZER_INTERCEPT_GETNAMEINFO
+INTERCEPTOR(int, getnameinfo, void *sockaddr, unsigned salen, char *host,
+            unsigned hostlen, char *serv, unsigned servlen, int flags) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getnameinfo, sockaddr, salen, host, hostlen,
+                           serv, servlen, flags);
+  // FIXME: consider adding READ_RANGE(sockaddr, salen)
+  // There is padding in in_addr that may make this too noisy
+  int res =
+      REAL(getnameinfo)(sockaddr, salen, host, hostlen, serv, servlen, flags);
+  if (res == 0) {
+    if (host && hostlen)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, host, REAL(strlen)(host) + 1);
+    if (serv && servlen)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, serv, REAL(strlen)(serv) + 1);
+  }
+  return res;
+}
+#define INIT_GETNAMEINFO INTERCEPT_FUNCTION(getnameinfo);
+#else
+#define INIT_GETNAMEINFO
+#endif
+
 #if SANITIZER_INTERCEPT_GETSOCKNAME
 INTERCEPTOR(int, getsockname, int sock_fd, void *addr, int *addrlen) {
   void *ctx;
@@ -1278,7 +1301,8 @@ INTERCEPTOR(__sanitizer_dirent *, readdir, void *dirp) {
   return res;
 }
 
-INTERCEPTOR(int, readdir_r, void *dirp, __sanitizer_dirent *entry, __sanitizer_dirent **result) {
+INTERCEPTOR(int, readdir_r, void *dirp, __sanitizer_dirent *entry,
+            __sanitizer_dirent **result) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, readdir_r, dirp, entry, result);
   int res = REAL(readdir_r)(dirp, entry, result);
@@ -1308,7 +1332,8 @@ INTERCEPTOR(__sanitizer_dirent64 *, readdir64, void *dirp) {
   return res;
 }
 
-INTERCEPTOR(int, readdir64_r, void *dirp, __sanitizer_dirent64 *entry, __sanitizer_dirent64 **result) {
+INTERCEPTOR(int, readdir64_r, void *dirp, __sanitizer_dirent64 *entry,
+            __sanitizer_dirent64 **result) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, readdir64_r, dirp, entry, result);
   int res = REAL(readdir64_r)(dirp, entry, result);
@@ -1325,6 +1350,53 @@ INTERCEPTOR(int, readdir64_r, void *dirp, __sanitizer_dirent64 *entry, __sanitiz
   INTERCEPT_FUNCTION(readdir64_r);
 #else
 #define INIT_READDIR64
+#endif
+
+#if SANITIZER_INTERCEPT_PTRACE
+INTERCEPTOR(uptr, ptrace, int request, int pid, void *addr, void *data) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, ptrace, request, pid, addr, data);
+
+  if (data) {
+    if (request == ptrace_setregs)
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, data, struct_user_regs_struct_sz);
+    else if (request == ptrace_setfpregs)
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, data, struct_user_fpregs_struct_sz);
+    else if (request == ptrace_setfpxregs)
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, data, struct_user_fpxregs_struct_sz);
+    else if (request == ptrace_setsiginfo)
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, data, siginfo_t_sz);
+    else if (request == ptrace_setregset) {
+      __sanitizer_iovec *iov = (__sanitizer_iovec *)data;
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, iov->iov_base, iov->iov_len);
+    }
+  }
+
+  uptr res = REAL(ptrace)(request, pid, addr, data);
+
+  if (!res && data) {
+    // Note that PEEK* requests assing different meaning to the return value.
+    // This function does not handle them (nor does it need to).
+    if (request == ptrace_getregs)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, struct_user_regs_struct_sz);
+    else if (request == ptrace_getfpregs)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, struct_user_fpregs_struct_sz);
+    else if (request == ptrace_getfpxregs)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, struct_user_fpxregs_struct_sz);
+    else if (request == ptrace_getsiginfo)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, siginfo_t_sz);
+    else if (request == ptrace_getregset) {
+      __sanitizer_iovec *iov = (__sanitizer_iovec *)data;
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, iov->iov_base, iov->iov_len);
+    }
+  }
+  return res;
+}
+
+#define INIT_PTRACE           \
+  INTERCEPT_FUNCTION(ptrace);
+#else
+#define INIT_PTRACE
 #endif
 
 
@@ -1358,6 +1430,7 @@ INTERCEPTOR(int, readdir64_r, void *dirp, __sanitizer_dirent64 *entry, __sanitiz
   INIT_INET;                               \
   INIT_PTHREAD_GETSCHEDPARAM;              \
   INIT_GETADDRINFO;                        \
+  INIT_GETNAMEINFO;                        \
   INIT_GETSOCKNAME;                        \
   INIT_GETHOSTBYNAME;                      \
   INIT_GETHOSTBYNAME_R;                    \
@@ -1371,4 +1444,5 @@ INTERCEPTOR(int, readdir64_r, void *dirp, __sanitizer_dirent64 *entry, __sanitiz
   INIT_INET_ATON;                          \
   INIT_SYSINFO;                            \
   INIT_READDIR;                            \
-  INIT_READDIR64;
+  INIT_READDIR64;                          \
+  INIT_PTRACE;

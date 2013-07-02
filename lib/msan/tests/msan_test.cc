@@ -754,6 +754,25 @@ TEST(MemorySanitizer, getaddrinfo) {
   EXPECT_NOT_POISONED(*(sockaddr_in*)ai->ai_addr); 
 }
 
+TEST(MemorySanitizer, getnameinfo) {
+  struct sockaddr_in sai;
+  sai.sin_family = AF_INET;
+  sai.sin_port = 80;
+  sai.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  char host[500];
+  char serv[500];
+  int res = getnameinfo((struct sockaddr *)&sai, sizeof(sai), host,
+                        sizeof(host), serv, sizeof(serv), 0);
+  ASSERT_EQ(0, res);
+  EXPECT_NOT_POISONED(host[0]);
+  EXPECT_POISONED(host[sizeof(host) - 1]);
+
+  ASSERT_NE(0, strlen(host));
+  EXPECT_NOT_POISONED(serv[0]);
+  EXPECT_POISONED(serv[sizeof(serv) - 1]);
+  ASSERT_NE(0, strlen(serv));
+}
+
 #define EXPECT_HOSTENT_NOT_POISONED(he)        \
   do {                                         \
     EXPECT_NOT_POISONED(*(he));                \
@@ -1012,6 +1031,19 @@ TEST(MemorySanitizer, strncpy) {  // NOLINT
   EXPECT_NOT_POISONED(y[0]);
   EXPECT_POISONED(y[1]);
   EXPECT_POISONED(y[2]);
+}
+
+TEST(MemorySanitizer, stpcpy) {  // NOLINT
+  char* x = new char[3];
+  char* y = new char[3];
+  x[0] = 'a';
+  x[1] = *GetPoisoned<char>(1, 1);
+  x[2] = 0;
+  char *res = stpcpy(y, x);  // NOLINT
+  ASSERT_EQ(res, y + 2);
+  EXPECT_NOT_POISONED(y[0]);
+  EXPECT_POISONED(y[1]);
+  EXPECT_NOT_POISONED(y[2]);
 }
 
 TEST(MemorySanitizer, strtol) {

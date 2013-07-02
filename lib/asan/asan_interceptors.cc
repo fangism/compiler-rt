@@ -53,7 +53,7 @@ static inline bool QuickCheckForUnpoisonedRegion(uptr beg, uptr size) {
   } while (0)
 
 #define ASAN_READ_RANGE(offset, size) ACCESS_MEMORY_RANGE(offset, size, false)
-#define ASAN_WRITE_RANGE(offset, size) ACCESS_MEMORY_RANGE(offset, size, true);
+#define ASAN_WRITE_RANGE(offset, size) ACCESS_MEMORY_RANGE(offset, size, true)
 
 // Behavior of functions like "memcpy" or "strcpy" is undefined
 // if memory intervals overlap. We report error in this case.
@@ -92,11 +92,6 @@ void SetThreadName(const char *name) {
   AsanThread *t = GetCurrentThread();
   if (t)
     asanThreadRegistry().SetThreadName(t->tid(), name);
-}
-
-static void DisableStrictInitOrderChecker() {
-  if (flags()->strict_init_order)
-    flags()->check_initialization_order = false;
 }
 
 }  // namespace __asan
@@ -145,7 +140,8 @@ extern "C" int pthread_attr_getdetachstate(void *attr, int *v);
 INTERCEPTOR(int, pthread_create, void *thread,
     void *attr, void *(*start_routine)(void*), void *arg) {
   // Strict init-order checking in thread-hostile.
-  DisableStrictInitOrderChecker();
+  if (flags()->strict_init_order)
+    StopInitOrderChecking();
   GET_STACK_TRACE_THREAD;
   int detached = 0;
   if (attr != 0)
@@ -250,7 +246,8 @@ static void MlockIsUnsupported() {
   static bool printed = false;
   if (printed) return;
   printed = true;
-  Printf("INFO: AddressSanitizer ignores mlock/mlockall/munlock/munlockall\n");
+  if (flags()->verbosity > 0)
+    Printf("INFO: AddressSanitizer ignores mlock/mlockall/munlock/munlockall\n");
 }
 
 INTERCEPTOR(int, mlock, const void *addr, uptr len) {
@@ -665,9 +662,10 @@ INTERCEPTOR(int, __cxa_atexit, void (*func)(void *), void *arg,
 INTERCEPTOR_WINAPI(DWORD, CreateThread,
                    void* security, uptr stack_size,
                    DWORD (__stdcall *start_routine)(void*), void* arg,
-                   DWORD flags, void* tid) {
+                   DWORD thr_flags, void* tid) {
   // Strict init-order checking in thread-hostile.
-  DisableStrictInitOrderChecker();
+  if (flags()->strict_init_order)
+    StopInitOrderChecking();
   GET_STACK_TRACE_THREAD;
   u32 current_tid = GetCurrentTidOrInvalid();
   AsanThread *t = AsanThread::Create(start_routine, arg);
@@ -675,7 +673,7 @@ INTERCEPTOR_WINAPI(DWORD, CreateThread,
   bool detached = false;  // FIXME: how can we determine it on Windows?
   asanThreadRegistry().CreateThread(*(uptr*)t, detached, current_tid, &args);
   return REAL(CreateThread)(security, stack_size,
-                            asan_thread_start, t, flags, tid);
+                            asan_thread_start, t, thr_flags, tid);
 }
 
 namespace __asan {
