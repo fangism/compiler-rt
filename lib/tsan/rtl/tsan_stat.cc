@@ -337,6 +337,18 @@ void StatOutput(u64 *stat) {
   name[StatInt_readdir_r]                = "  readdir_r                       ";
   name[StatInt_readdir64_r]              = "  readdir64_r                     ";
   name[StatInt_ptrace]                   = "  ptrace                          ";
+  name[StatInt_setlocale]                = "  setlocale                       ";
+  name[StatInt_getcwd]                   = "  getcwd                          ";
+  name[StatInt_get_current_dir_name]     = "  get_current_dir_name            ";
+  name[StatInt_strtoimax]                = "  strtoimax                       ";
+  name[StatInt_strtoumax]                = "  strtoumax                       ";
+  name[StatInt_mbstowcs]                 = "  mbstowcs                        ";
+  name[StatInt_mbsrtowcs]                = "  mbsrtowcs                       ";
+  name[StatInt_mbsnrtowcs]               = "  mbsnrtowcs                      ";
+  name[StatInt_wcstombs]                 = "  wcstombs                        ";
+  name[StatInt_wcsrtombs]                = "  wcsrtombs                       ";
+  name[StatInt_wcsnrtombs]               = "  wcsnrtombs                      ";
+  name[StatInt_tcgetattr]                = "  tcgetattr                       ";
 
   name[StatAnnotation]                   = "Dynamic annotations               ";
   name[StatAnnotateHappensBefore]        = "  HappensBefore                   ";

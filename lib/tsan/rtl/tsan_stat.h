@@ -332,6 +332,18 @@ enum StatType {
   StatInt_readdir_r,
   StatInt_readdir64_r,
   StatInt_ptrace,
+  StatInt_setlocale,
+  StatInt_getcwd,
+  StatInt_get_current_dir_name,
+  StatInt_strtoimax,
+  StatInt_strtoumax,
+  StatInt_mbstowcs,
+  StatInt_mbsrtowcs,
+  StatInt_mbsnrtowcs,
+  StatInt_wcstombs,
+  StatInt_wcsrtombs,
+  StatInt_wcsnrtombs,
+  StatInt_tcgetattr,
 
   // Dynamic annotations.
   StatAnnotation,

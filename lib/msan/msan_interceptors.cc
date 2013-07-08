@@ -107,12 +107,20 @@ INTERCEPTOR(void *, memcpy, void *dest, const void *src, SIZE_T n) {
   return __msan_memcpy(dest, src, n);
 }
 
+INTERCEPTOR(void *, mempcpy, void *dest, const void *src, SIZE_T n) {
+  return (char *)__msan_memcpy(dest, src, n) + n;
+}
+
 INTERCEPTOR(void *, memmove, void *dest, const void *src, SIZE_T n) {
   return __msan_memmove(dest, src, n);
 }
 
 INTERCEPTOR(void *, memset, void *s, int c, SIZE_T n) {
   return __msan_memset(s, c, n);
+}
+
+INTERCEPTOR(void *, bcopy, const void *src, void *dest, SIZE_T n) {
+  return __msan_memmove(dest, src, n);
 }
 
 INTERCEPTOR(int, posix_memalign, void **memptr, SIZE_T alignment, SIZE_T size) {
@@ -390,18 +398,17 @@ INTERCEPTOR(SIZE_T, strftime, char *s, SIZE_T max, const char *format,
   return res;
 }
 
-INTERCEPTOR(SIZE_T, wcstombs, void *dest, void *src, SIZE_T size) {
+INTERCEPTOR(int, mbtowc, wchar_t *dest, const char *src, SIZE_T n) {
   ENSURE_MSAN_INITED();
-  SIZE_T res = REAL(wcstombs)(dest, src, size);
-  if (res != (SIZE_T)-1) __msan_unpoison(dest, res + 1);
+  int res = REAL(mbtowc)(dest, src, n);
+  if (res != -1 && dest) __msan_unpoison(dest, sizeof(wchar_t));
   return res;
 }
 
-// SIZE_T mbstowcs(wchar_t *dest, const char *src, SIZE_T n);
-INTERCEPTOR(SIZE_T, mbstowcs, wchar_t *dest, const char *src, SIZE_T n) {
+INTERCEPTOR(int, mbrtowc, wchar_t *dest, const char *src, SIZE_T n, void *ps) {
   ENSURE_MSAN_INITED();
-  SIZE_T res = REAL(mbstowcs)(dest, src, n);
-  if (res != (SIZE_T)-1) __msan_unpoison(dest, (res + 1) * sizeof(wchar_t));
+  SIZE_T res = REAL(mbrtowc)(dest, src, n, ps);
+  if (res != (SIZE_T)-1 && dest) __msan_unpoison(dest, sizeof(wchar_t));
   return res;
 }
 
@@ -431,6 +438,13 @@ INTERCEPTOR(wchar_t *, wcscpy, wchar_t *dest, const wchar_t *src) {
 INTERCEPTOR(wchar_t *, wmemcpy, wchar_t *dest, const wchar_t *src, SIZE_T n) {
   ENSURE_MSAN_INITED();
   wchar_t *res = REAL(wmemcpy)(dest, src, n);
+  __msan_copy_poison(dest, src, n * sizeof(wchar_t));
+  return res;
+}
+
+INTERCEPTOR(wchar_t *, wmempcpy, wchar_t *dest, const wchar_t *src, SIZE_T n) {
+  ENSURE_MSAN_INITED();
+  wchar_t *res = REAL(wmempcpy)(dest, src, n);
   __msan_copy_poison(dest, src, n * sizeof(wchar_t));
   return res;
 }
@@ -602,14 +616,6 @@ INTERCEPTOR(char *, fgets_unlocked, char *s, int size, void *stream) {
   char *res = REAL(fgets_unlocked)(s, size, stream);
   if (res)
     __msan_unpoison(s, REAL(strlen)(s) + 1);
-  return res;
-}
-
-INTERCEPTOR(char *, getcwd, char *buf, SIZE_T size) {
-  ENSURE_MSAN_INITED();
-  char *res = REAL(getcwd)(buf, size);
-  if (res)
-    __msan_unpoison(res, REAL(strlen)(res) + 1);
   return res;
 }
 
@@ -973,6 +979,14 @@ INTERCEPTOR(int, pthread_create, void *th, void *attr, void *(*callback)(void*),
   return res;
 }
 
+INTERCEPTOR(int, pthread_key_create, __sanitizer_pthread_key_t *key, void (*dtor) (void *)) {
+  ENSURE_MSAN_INITED();
+  int res = REAL(pthread_key_create)(key, dtor);
+  if (!res && key)
+    __msan_unpoison(key, sizeof(*key));
+  return res;
+}
+
 struct MSanInterceptorContext {
   bool in_interceptor_scope;
 };
@@ -1137,10 +1151,13 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(fread_unlocked);
   INTERCEPT_FUNCTION(readlink);
   INTERCEPT_FUNCTION(memcpy);
+  INTERCEPT_FUNCTION(mempcpy);
   INTERCEPT_FUNCTION(memset);
   INTERCEPT_FUNCTION(memmove);
+  INTERCEPT_FUNCTION(bcopy);
   INTERCEPT_FUNCTION(wmemset);
   INTERCEPT_FUNCTION(wmemcpy);
+  INTERCEPT_FUNCTION(wmempcpy);
   INTERCEPT_FUNCTION(wmemmove);
   INTERCEPT_FUNCTION(strcpy);  // NOLINT
   INTERCEPT_FUNCTION(stpcpy);  // NOLINT
@@ -1170,8 +1187,8 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(snprintf);
   INTERCEPT_FUNCTION(swprintf);
   INTERCEPT_FUNCTION(strftime);
-  INTERCEPT_FUNCTION(wcstombs);
-  INTERCEPT_FUNCTION(mbstowcs);
+  INTERCEPT_FUNCTION(mbtowc);
+  INTERCEPT_FUNCTION(mbrtowc);
   INTERCEPT_FUNCTION(wcslen);
   INTERCEPT_FUNCTION(wcschr);
   INTERCEPT_FUNCTION(wcscpy);
@@ -1191,7 +1208,6 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(socketpair);
   INTERCEPT_FUNCTION(fgets);
   INTERCEPT_FUNCTION(fgets_unlocked);
-  INTERCEPT_FUNCTION(getcwd);
   INTERCEPT_FUNCTION(realpath);
   INTERCEPT_FUNCTION(getrlimit);
   INTERCEPT_FUNCTION(getrlimit64);
@@ -1212,6 +1228,7 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(sigaction);
   INTERCEPT_FUNCTION(signal);
   INTERCEPT_FUNCTION(pthread_create);
+  INTERCEPT_FUNCTION(pthread_key_create);
   inited = 1;
 }
 }  // namespace __msan

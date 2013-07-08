@@ -58,6 +58,7 @@
 #endif
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
+#include <glob.h>
 #include <net/if_ppp.h>
 #include <netax25/ax25.h>
 #include <netipx/ipx.h>
@@ -165,6 +166,11 @@ namespace __sanitizer {
   }
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
+  int glob_nomatch = GLOB_NOMATCH;
+#endif
+
+#if SANITIZER_LINUX && !SANITIZER_ANDROID && \
+      (defined(__i386) || defined (__x86_64))
   unsigned struct_user_regs_struct_sz = sizeof(struct user_regs_struct);
   unsigned struct_user_fpregs_struct_sz = sizeof(struct user_fpregs_struct);
 #if __WORDSIZE == 64
@@ -723,6 +729,7 @@ COMPILER_CHECK(sizeof(__sanitizer::struct_sigaction_max_sz) >=
                    sizeof(__sanitizer::struct_sigaction_sz));
 
 COMPILER_CHECK(sizeof(socklen_t) == sizeof(unsigned));
+CHECK_TYPE_SIZE(pthread_key_t);
 
 #if SANITIZER_LINUX
 // There are more undocumented fields in dl_phdr_info that we are not interested
@@ -734,6 +741,12 @@ CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_phdr);
 CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_phnum);
 
 COMPILER_CHECK(IOC_SIZE(0x12345678) == _IOC_SIZE(0x12345678));
+#endif
+
+#if SANITIZER_LINUX && !SANITIZER_ANDROID
+COMPILER_CHECK(sizeof(__sanitizer_glob_t) <= sizeof(glob_t));
+CHECK_SIZE_AND_OFFSET(glob_t, gl_pathc);
+CHECK_SIZE_AND_OFFSET(glob_t, gl_pathv);
 #endif
 
 CHECK_TYPE_SIZE(addrinfo);
