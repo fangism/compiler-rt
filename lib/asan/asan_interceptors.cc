@@ -100,6 +100,12 @@ void SetThreadName(const char *name) {
 using __sanitizer::OFF_T;
 using namespace __asan;  // NOLINT
 
+DECLARE_REAL_AND_INTERCEPTOR(void *, malloc, uptr)
+DECLARE_REAL_AND_INTERCEPTOR(void, free, void *)
+
+#define COMMON_INTERCEPTOR_UNPOISON_PARAM(ctx, count) \
+  do {                                                \
+  } while (false)
 #define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size) \
   ASAN_WRITE_RANGE(ptr, size)
 #define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size) ASAN_READ_RANGE(ptr, size)
@@ -124,8 +130,12 @@ using namespace __asan;  // NOLINT
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) ASAN_READ_RANGE(p, s)
 #define COMMON_SYSCALL_PRE_WRITE_RANGE(p, s) ASAN_WRITE_RANGE(p, s)
-#define COMMON_SYSCALL_POST_READ_RANGE(p, s)
-#define COMMON_SYSCALL_POST_WRITE_RANGE(p, s)
+#define COMMON_SYSCALL_POST_READ_RANGE(p, s) \
+  do {                                       \
+  } while (false)
+#define COMMON_SYSCALL_POST_WRITE_RANGE(p, s) \
+  do {                                        \
+  } while (false)
 #include "sanitizer_common/sanitizer_common_syscalls.inc"
 
 static thread_return_t THREAD_CALLING_CONV asan_thread_start(void *arg) {
