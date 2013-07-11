@@ -1225,11 +1225,14 @@ TEST(MemorySanitizer, wcsrtombs) {
   const wchar_t *p = x;
   char buff[10];
   mbstate_t mbs;
+  memset(&mbs, 0, sizeof(mbs));
   int res = wcsrtombs(buff, &p, 4, &mbs);
   EXPECT_EQ(res, 3);
   EXPECT_EQ(buff[0], 'a');
   EXPECT_EQ(buff[1], 'b');
   EXPECT_EQ(buff[2], 'c');
+  EXPECT_EQ(buff[3], '\0');
+  EXPECT_POISONED(buff[4]);
 }
 
 TEST(MemorySanitizer, wcsnrtombs) {
@@ -1237,11 +1240,12 @@ TEST(MemorySanitizer, wcsnrtombs) {
   const wchar_t *p = x;
   char buff[10];
   mbstate_t mbs;
+  memset(&mbs, 0, sizeof(mbs));
   int res = wcsnrtombs(buff, &p, 2, 4, &mbs);
   EXPECT_EQ(res, 2);
   EXPECT_EQ(buff[0], 'a');
   EXPECT_EQ(buff[1], 'b');
-  EXPECT_EQ(buff[2], 0);
+  EXPECT_POISONED(buff[2]);
 }
 
 TEST(MemorySanitizer, mbtowc) {
