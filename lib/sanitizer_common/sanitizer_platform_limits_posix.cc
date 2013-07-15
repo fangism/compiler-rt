@@ -174,7 +174,7 @@ namespace __sanitizer {
 #endif
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID && \
-      (defined(__i386) || defined (__x86_64))
+      (defined(__i386) || defined (__x86_64))  // NOLINT
   unsigned struct_user_regs_struct_sz = sizeof(struct user_regs_struct);
   unsigned struct_user_fpregs_struct_sz = sizeof(struct user_fpregs_struct);
 #if __WORDSIZE == 64
@@ -182,7 +182,7 @@ namespace __sanitizer {
 #else
   unsigned struct_user_fpxregs_struct_sz = sizeof(struct user_fpxregs_struct);
 #endif
-  
+
   int ptrace_getregs = PTRACE_GETREGS;
   int ptrace_setregs = PTRACE_SETREGS;
   int ptrace_getfpregs = PTRACE_GETFPREGS;
@@ -797,11 +797,19 @@ CHECK_SIZE_AND_OFFSET(cmsghdr, cmsg_len);
 CHECK_SIZE_AND_OFFSET(cmsghdr, cmsg_level);
 CHECK_SIZE_AND_OFFSET(cmsghdr, cmsg_type);
 
+COMPILER_CHECK(sizeof(__sanitizer_dirent) <= sizeof(dirent));
 CHECK_SIZE_AND_OFFSET(dirent, d_ino);
 #ifndef SANITIZER_MAC
 CHECK_SIZE_AND_OFFSET(dirent, d_off);
 #endif
 CHECK_SIZE_AND_OFFSET(dirent, d_reclen);
+
+#if SANITIZER_LINUX && !SANITIZER_ANDROID
+COMPILER_CHECK(sizeof(__sanitizer_dirent64) <= sizeof(dirent64));
+CHECK_SIZE_AND_OFFSET(dirent64, d_ino);
+CHECK_SIZE_AND_OFFSET(dirent64, d_off);
+CHECK_SIZE_AND_OFFSET(dirent64, d_reclen);
+#endif
 
 CHECK_TYPE_SIZE(ifconf);
 CHECK_SIZE_AND_OFFSET(ifconf, ifc_len);

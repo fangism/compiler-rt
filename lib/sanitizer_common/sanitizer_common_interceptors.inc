@@ -751,7 +751,7 @@ static void unpoison_glob_t(void *ctx, __sanitizer_glob_t *pglob) {
   }
 }
 
-static THREADLOCAL __sanitizer_glob_t* pglob_copy; 
+static THREADLOCAL __sanitizer_glob_t* pglob_copy;
 static THREADLOCAL void* glob_ctx;
 
 static void wrapped_gl_closedir(void *dir) {
@@ -1372,10 +1372,9 @@ INTERCEPTOR(int, readdir_r, void *dirp, __sanitizer_dirent *entry,
   COMMON_INTERCEPTOR_ENTER(ctx, readdir_r, dirp, entry, result);
   int res = REAL(readdir_r)(dirp, entry, result);
   if (!res) {
-    if (result)
-      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, result, sizeof(*result));
-    if (entry && *result)
-      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, entry, entry->d_reclen);
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, result, sizeof(*result));
+    if (*result)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, *result, (*result)->d_reclen);
   }
   return res;
 }
@@ -1403,10 +1402,9 @@ INTERCEPTOR(int, readdir64_r, void *dirp, __sanitizer_dirent64 *entry,
   COMMON_INTERCEPTOR_ENTER(ctx, readdir64_r, dirp, entry, result);
   int res = REAL(readdir64_r)(dirp, entry, result);
   if (!res) {
-    if (result)
-      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, result, sizeof(*result));
-    if (entry)
-      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, entry, entry->d_reclen);
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, result, sizeof(*result));
+    if (*result)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, *result, (*result)->d_reclen);
   }
   return res;
 }
