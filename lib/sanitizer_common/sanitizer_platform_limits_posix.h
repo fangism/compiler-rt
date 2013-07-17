@@ -17,6 +17,8 @@
 
 #include "sanitizer_platform.h"
 
+#define is_powerpc	(defined(__ppc__) || defined(__powerpc__) || defined(__POWERPC__))
+
 namespace __sanitizer {
   extern unsigned struct_utsname_sz;
   extern unsigned struct_stat_sz;
@@ -96,7 +98,14 @@ namespace __sanitizer {
 
 #if SANITIZER_MAC
   struct __sanitizer_dirent {
-    unsigned d_ino;
+#if is_powerpc
+    unsigned int d_ino;			// darwin8
+#else
+    unsigned long long d_ino;
+#endif
+#if !is_powerpc
+    unsigned long long d_seekoff;		// not in darwin8
+#endif
     unsigned short d_reclen;
     // more fields that we don't care about
   };
