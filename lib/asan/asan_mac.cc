@@ -36,33 +36,62 @@
 #include <pthread.h>
 #include <stdlib.h>  // for free()
 #include <unistd.h>
+#ifdef	__APPLE__
 #include <libkern/OSAtomic.h>
+#endif
 
-#if defined(__GNUC__) && (__GNUC__ == 4) && (__GNUC_MINOR__ < 2)
+#ifdef	__APPLE__
+#define	__DARWIN_VERSION__	((MAC_OS_X_VERSION_MIN_REQUIRED - MAC_OS_X_VERSION_10_0)/10 +4)
+#else
+#define	__DARWIN_VERSION__	0
+#endif
+
+// Looks like blocks/dispatch became available 10.6 and later.
+#if __DARWIN_VERSION__ && (__DARWIN_VERSION__ < 10)
 #define	MISSING_BLOCKS_SUPPORT
 #endif
 
 namespace __asan {
 
+// adjusting for different struct member names on darwin8
+// see /usr/include/i386/_structs.h on darwin9+
+// see /usr/include/i386/ucontext.h on darwin8
+#if	__DARWIN_VERSION__ && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
+#define	STATE_MEM		ss
+#else
+#define	STATE_MEM		__ss
+#endif
+
+// see /usr/include/mach/i386/_structs.h on darwin9+
+// see /usr/include/mach/i386/thread_status.h on darwin8
+#if	defined(__APPLE__) && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
+#define	X86_THREAD_MEM(x)	x
+#else
+#define	X86_THREAD_MEM(x)	__ ## x
+#endif
+
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   ucontext_t *ucontext = (ucontext_t*)context;
 #if defined(__ppc__) || defined(__ppc64__)
-  *pc = ucontext->uc_mcontext->ss.srr0;
-  *bp = ucontext->uc_mcontext->ss.r1;		// or r31
+  *pc = ucontext->uc_mcontext->STATE_MEM.srr0;
+  *bp = ucontext->uc_mcontext->STATE_MEM.r1;		// or r31
 	// powerpc has no dedicated frame pointer
-  *sp = ucontext->uc_mcontext->ss.r1;
+  *sp = ucontext->uc_mcontext->STATE_MEM.r1;
 #else
 # if SANITIZER_WORDSIZE == 64
-  *pc = ucontext->uc_mcontext->__ss.__rip;
-  *bp = ucontext->uc_mcontext->__ss.__rbp;
-  *sp = ucontext->uc_mcontext->__ss.__rsp;
+  *pc = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(rip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(rbp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(rsp);
 # else
-  *pc = ucontext->uc_mcontext->ss.eip;
-  *bp = ucontext->uc_mcontext->ss.ebp;
-  *sp = ucontext->uc_mcontext->ss.esp;
+  *pc = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(eip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(ebp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(esp);
 # endif  // SANITIZER_WORDSIZE
 #endif
 }
+
+#undef	STATE_MEM
+#undef	X86_THREAD_MEM
 
 MacosVersion cached_macos_version = MACOS_VERSION_UNINITIALIZED;
 
