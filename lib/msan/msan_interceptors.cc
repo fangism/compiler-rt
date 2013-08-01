@@ -529,6 +529,32 @@ INTERCEPTOR(char *, getenv, char *name) {
   return res;
 }
 
+extern char **environ;
+
+static void UnpoisonEnviron() {
+  char **envp = environ;
+  for (; *envp; ++envp) {
+    __msan_unpoison(envp, sizeof(*envp));
+    __msan_unpoison(*envp, REAL(strlen)(*envp) + 1);
+  }
+  // Trailing NULL pointer.
+  __msan_unpoison(envp, sizeof(*envp));
+}
+
+INTERCEPTOR(int, setenv, const char *name, const char *value, int overwrite) {
+  ENSURE_MSAN_INITED();
+  int res = REAL(setenv)(name, value, overwrite);
+  if (!res) UnpoisonEnviron();
+  return res;
+}
+
+INTERCEPTOR(int, putenv, char *string) {
+  ENSURE_MSAN_INITED();
+  int res = REAL(putenv)(string);
+  if (!res) UnpoisonEnviron();
+  return res;
+}
+
 INTERCEPTOR(int, __fxstat, int magic, int fd, void *buf) {
   ENSURE_MSAN_INITED();
   int res = REAL(__fxstat)(magic, fd, buf);
@@ -827,7 +853,7 @@ INTERCEPTOR(void *, dlopen, const char *filename, int flag) {
   if (!__msan_has_dynamic_component() && map) {
     // If msandr didn't clear the shadow before the initializers ran, we do it
     // ourselves afterwards.
-    UnpoisonMappedDSO(map);
+    ForEachMappedRegion(map, __msan_unpoison);
   }
   return (void *)map;
 }
@@ -977,6 +1003,14 @@ INTERCEPTOR(int, pthread_key_create, __sanitizer_pthread_key_t *key,
   int res = REAL(pthread_key_create)(key, dtor);
   if (!res && key)
     __msan_unpoison(key, sizeof(*key));
+  return res;
+}
+
+INTERCEPTOR(int, pthread_join, void *th, void **retval) {
+  ENSURE_MSAN_INITED();
+  int res = REAL(pthread_join)(th, retval);
+  if (!res && retval)
+    __msan_unpoison(retval, sizeof(*retval));
   return res;
 }
 
@@ -1190,6 +1224,8 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(wcscmp);
   INTERCEPT_FUNCTION(wcstod);
   INTERCEPT_FUNCTION(getenv);
+  INTERCEPT_FUNCTION(setenv);
+  INTERCEPT_FUNCTION(putenv);
   INTERCEPT_FUNCTION(gettimeofday);
   INTERCEPT_FUNCTION(fcvt);
   INTERCEPT_FUNCTION(__fxstat);
@@ -1223,6 +1259,7 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(signal);
   INTERCEPT_FUNCTION(pthread_create);
   INTERCEPT_FUNCTION(pthread_key_create);
+  INTERCEPT_FUNCTION(pthread_join);
   inited = 1;
 }
 }  // namespace __msan

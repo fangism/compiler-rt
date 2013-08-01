@@ -926,6 +926,22 @@ TEST(MemorySanitizer, get_current_dir_name) {
   free(res);
 }
 
+TEST(MemorySanitizer, confstr) {
+  char buf[3];
+  size_t res = confstr(_CS_PATH, buf, sizeof(buf));
+  ASSERT_GT(res, sizeof(buf));
+  EXPECT_NOT_POISONED(buf[0]);
+  EXPECT_NOT_POISONED(buf[sizeof(buf) - 1]);
+
+  char buf2[1000];
+  res = confstr(_CS_PATH, buf2, sizeof(buf2));
+  ASSERT_LT(res, sizeof(buf2));
+  EXPECT_NOT_POISONED(buf2[0]);
+  EXPECT_NOT_POISONED(buf2[res - 1]);
+  EXPECT_POISONED(buf2[res]);
+  ASSERT_EQ(res, strlen(buf2) + 1);
+}
+
 TEST(MemorySanitizer, readdir) {
   DIR *dir = opendir(".");
   struct dirent *d = readdir(dir);
@@ -968,6 +984,25 @@ TEST(MemorySanitizer, canonicalize_file_name) {
   assert(res);
   EXPECT_NOT_POISONED(res[0]);
   free(res);
+}
+
+extern char **environ;
+
+TEST(MemorySanitizer, setenv) {
+  setenv("AAA", "BBB", 1);
+  for (char **envp = environ; *envp; ++envp) {
+    EXPECT_NOT_POISONED(*envp);
+    EXPECT_NOT_POISONED(*envp[0]);
+  }
+}
+
+TEST(MemorySanitizer, putenv) {
+  char s[] = "AAA=BBB";
+  putenv(s);
+  for (char **envp = environ; *envp; ++envp) {
+    EXPECT_NOT_POISONED(*envp);
+    EXPECT_NOT_POISONED(*envp[0]);
+  }
 }
 
 TEST(MemorySanitizer, memcpy) {
@@ -2043,8 +2078,7 @@ TEST(MemorySanitizer, SimpleThread) {
   EXPECT_NOT_POISONED(t);
   res = pthread_join(t, &p);
   assert(!res);
-  if (!__msan_has_dynamic_component())  // FIXME: intercept pthread_join (?).
-    __msan_unpoison(&p, sizeof(p));
+  EXPECT_NOT_POISONED(p);
   delete (int*)p;
 }
 
