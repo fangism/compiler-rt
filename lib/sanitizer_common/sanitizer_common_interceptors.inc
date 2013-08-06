@@ -758,7 +758,7 @@ INTERCEPTOR(int, getitimer, int which, void *curr_value) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, getitimer, which, curr_value);
   int res = REAL(getitimer)(which, curr_value);
-  if (!res) {
+  if (!res && curr_value) {
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, curr_value, struct_itimerval_sz);
   }
   return res;
@@ -766,7 +766,8 @@ INTERCEPTOR(int, getitimer, int which, void *curr_value) {
 INTERCEPTOR(int, setitimer, int which, const void *new_value, void *old_value) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, setitimer, which, new_value, old_value);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, new_value, struct_itimerval_sz);
+  if (new_value)
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, new_value, struct_itimerval_sz);
   int res = REAL(setitimer)(which, new_value, old_value);
   if (!res && old_value) {
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, old_value, struct_itimerval_sz);
@@ -1761,6 +1762,20 @@ INTERCEPTOR(SIZE_T, confstr, int name, char *buf, SIZE_T len) {
 #define INIT_CONFSTR
 #endif
 
+#if SANITIZER_INTERCEPT_SCHED_GETAFFINITY
+INTERCEPTOR(int, sched_getaffinity, int pid, SIZE_T cpusetsize, void *mask) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, sched_getaffinity, pid, cpusetsize, mask);
+  int res = REAL(sched_getaffinity)(pid, cpusetsize, mask);
+  if (mask && !res)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, mask, cpusetsize);
+  return res;
+}
+#define INIT_SCHED_GETAFFINITY INTERCEPT_FUNCTION(sched_getaffinity);
+#else
+#define INIT_SCHED_GETAFFINITY
+#endif
+
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_STRCMP;                             \
   INIT_STRNCMP;                            \
@@ -1820,4 +1835,5 @@ INTERCEPTOR(SIZE_T, confstr, int name, char *buf, SIZE_T len) {
   INIT_TCGETATTR;                          \
   INIT_REALPATH;                           \
   INIT_CANONICALIZE_FILE_NAME;             \
-  INIT_CONFSTR;
+  INIT_CONFSTR;                            \
+  INIT_SCHED_GETAFFINITY;
