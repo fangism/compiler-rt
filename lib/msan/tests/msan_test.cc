@@ -544,6 +544,22 @@ TEST(MemorySanitizer, LargeRet) {
   EXPECT_POISONED(a.x[9]);
 }
 
+TEST(MemorySanitizer, strerror) {
+  char *buf = strerror(EINVAL);
+  EXPECT_NOT_POISONED(strlen(buf));
+  buf = strerror(123456);
+  EXPECT_NOT_POISONED(strlen(buf));
+}
+
+TEST(MemorySanitizer, strerror_r) {
+  errno = 0;
+  char buf[1000];
+  char *res = strerror_r(EINVAL, buf, sizeof(buf));
+  ASSERT_EQ(0, errno);
+  if (!res) res = buf; // POSIX version success.
+  EXPECT_NOT_POISONED(strlen(res));
+}
+
 TEST(MemorySanitizer, fread) {
   char *x = new char[32];
   FILE *f = fopen("/proc/self/stat", "r");
@@ -2058,7 +2074,7 @@ TEST(MemorySanitizer, sched_getaffinity) {
   cpu_set_t mask;
   int res = sched_getaffinity(getpid(), sizeof(mask), &mask);
   ASSERT_EQ(0, res);
-  ASSERT_TRUE(CPU_ISSET(0, &mask));
+  EXPECT_NOT_POISONED(mask);
 }
 
 TEST(MemorySanitizer, scanf) {
