@@ -250,6 +250,7 @@ enum StatType {
   StatInt_epoll_ctl,
   StatInt_epoll_wait,
   StatInt_poll,
+  StatInt_ppoll,
   StatInt_sigaction,
   StatInt_signal,
   StatInt_sigsuspend,
@@ -353,6 +354,7 @@ enum StatType {
   StatInt_strerror_r,
   StatInt_scandir,
   StatInt_scandir64,
+  StatInt_getgroups,
 
   // Dynamic annotations.
   StatAnnotation,
