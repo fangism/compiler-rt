@@ -362,35 +362,37 @@ static void LongJmp(ThreadState *thr, uptr *env) {
   CHECK(0);
 }
 
+// FIXME: put everything below into a common extern "C" block?
 extern "C" void __tsan_setjmp(uptr sp, uptr mangled_sp) {
   ScopedInRtl in_rtl;
   SetJmp(cur_thread(), sp, mangled_sp);
 }
 
 // Not called.  Merely to satisfy TSAN_INTERCEPT().
-extern "C" int __interceptor_setjmp(void *env)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+extern "C" SANITIZER_INTERFACE_ATTRIBUTE
+int __interceptor_setjmp(void *env);
 extern "C" int __interceptor_setjmp(void *env) {
   CHECK(0);
   return 0;
 }
 
-extern "C" int __interceptor__setjmp(void *env)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+// FIXME: any reason to have a separate declaration?
+extern "C" SANITIZER_INTERFACE_ATTRIBUTE
+int __interceptor__setjmp(void *env);
 extern "C" int __interceptor__setjmp(void *env) {
   CHECK(0);
   return 0;
 }
 
-extern "C" int __interceptor_sigsetjmp(void *env)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+extern "C" SANITIZER_INTERFACE_ATTRIBUTE
+int __interceptor_sigsetjmp(void *env);
 extern "C" int __interceptor_sigsetjmp(void *env) {
   CHECK(0);
   return 0;
 }
 
-extern "C" int __interceptor___sigsetjmp(void *env)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+extern "C" SANITIZER_INTERFACE_ATTRIBUTE
+int __interceptor___sigsetjmp(void *env);
 extern "C" int __interceptor___sigsetjmp(void *env) {
   CHECK(0);
   return 0;
@@ -502,26 +504,26 @@ TSAN_INTERCEPTOR(uptr, malloc_usable_size, void *p) {
   invoke_malloc_hook(p, size);  \
   return p;
 
-void *operator new(__sanitizer::uptr size)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void *operator new(__sanitizer::uptr size);
 void *operator new(__sanitizer::uptr size) {
   OPERATOR_NEW_BODY(_Znwm);
 }
 
-void *operator new[](__sanitizer::uptr size)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void *operator new[](__sanitizer::uptr size);
 void *operator new[](__sanitizer::uptr size) {
   OPERATOR_NEW_BODY(_Znam);
 }
 
-void *operator new(__sanitizer::uptr size, std::nothrow_t const&)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void *operator new(__sanitizer::uptr size, std::nothrow_t const&);
 void *operator new(__sanitizer::uptr size, std::nothrow_t const&) {
   OPERATOR_NEW_BODY(_ZnwmRKSt9nothrow_t);
 }
 
-void *operator new[](__sanitizer::uptr size, std::nothrow_t const&)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void *operator new[](__sanitizer::uptr size, std::nothrow_t const&);
 void *operator new[](__sanitizer::uptr size, std::nothrow_t const&) {
   OPERATOR_NEW_BODY(_ZnamRKSt9nothrow_t);
 }
@@ -534,26 +536,26 @@ void *operator new[](__sanitizer::uptr size, std::nothrow_t const&) {
   SCOPED_INTERCEPTOR_RAW(mangled_name, ptr);  \
   user_free(thr, pc, ptr);
 
-void operator delete(void *ptr)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void operator delete(void *ptr);
 void operator delete(void *ptr) {
   OPERATOR_DELETE_BODY(_ZdlPv);
 }
 
-void operator delete[](void *ptr)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void operator delete[](void *ptr);
 void operator delete[](void *ptr) {
   OPERATOR_DELETE_BODY(_ZdlPvRKSt9nothrow_t);
 }
 
-void operator delete(void *ptr, std::nothrow_t const&)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void operator delete(void *ptr, std::nothrow_t const&);
 void operator delete(void *ptr, std::nothrow_t const&) {
   OPERATOR_DELETE_BODY(_ZdaPv);
 }
 
-void operator delete[](void *ptr, std::nothrow_t const&)
-    SANITIZER_INTERFACE_ATTRIBUTE;
+SANITIZER_INTERFACE_ATTRIBUTE
+void operator delete[](void *ptr, std::nothrow_t const&);
 void operator delete[](void *ptr, std::nothrow_t const&) {
   OPERATOR_DELETE_BODY(_ZdaPvRKSt9nothrow_t);
 }
@@ -1733,6 +1735,20 @@ TSAN_INTERCEPTOR(int, gettimeofday, void *tv, void *tz) {
   return REAL(gettimeofday)(tv, tz);
 }
 
+TSAN_INTERCEPTOR(int, getaddrinfo, void *node, void *service,
+    void *hints, void *rv) {
+  SCOPED_TSAN_INTERCEPTOR(getaddrinfo, node, service, hints, rv);
+  // We miss atomic synchronization in getaddrinfo,
+  // and can report false race between malloc and free
+  // inside of getaddrinfo. So ignore memory accesses.
+  IgnoreCtl(thr, true, true);
+  IgnoreCtl(thr, false, true);
+  int res = REAL(getaddrinfo)(node, service, hints, rv);
+  IgnoreCtl(thr, true, false);
+  IgnoreCtl(thr, false, false);
+  return res;
+}
+
 // Linux kernel has a bug that leads to kernel deadlock if a process
 // maps TBs of memory and then calls mlock().
 static void MlockIsUnsupported() {
@@ -2054,6 +2070,7 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(usleep);
   TSAN_INTERCEPT(nanosleep);
   TSAN_INTERCEPT(gettimeofday);
+  TSAN_INTERCEPT(getaddrinfo);
 
   TSAN_INTERCEPT(mlock);
   TSAN_INTERCEPT(munlock);

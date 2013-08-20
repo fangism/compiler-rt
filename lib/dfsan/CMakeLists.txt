@@ -2,8 +2,9 @@ include_directories(..)
 
 # Runtime library sources and build flags.
 set(DFSAN_RTL_SOURCES
-  dfsan.cc)
-
+  dfsan.cc
+  dfsan_custom.cc
+  dfsan_interceptors.cc)
 set(DFSAN_RTL_CFLAGS
   ${SANITIZER_COMMON_CFLAGS}
   # Prevent clang from generating libc calls.
@@ -25,5 +26,17 @@ if(CAN_TARGET_${arch})
             CFLAGS ${DFSAN_RTL_CFLAGS} -fPIC -DDFSAN_NOLIBC)
   list(APPEND DFSAN_RUNTIME_LIBRARIES clang_rt.dfsan-${arch})
 endif()
+
+add_custom_target(dfsan_abilist ALL
+                                SOURCES ${CLANG_RESOURCE_DIR}/dfsan_abilist.txt)
+add_custom_command(OUTPUT ${CLANG_RESOURCE_DIR}/dfsan_abilist.txt
+                   VERBATIM
+                   COMMAND
+                     cat ${CMAKE_CURRENT_SOURCE_DIR}/done_abilist.txt
+                         ${CMAKE_CURRENT_SOURCE_DIR}/libc_ubuntu1204_abilist.txt
+                         > ${CLANG_RESOURCE_DIR}/dfsan_abilist.txt
+                   DEPENDS done_abilist.txt libc_ubuntu1204_abilist.txt)
+install(FILES ${CLANG_RESOURCE_DIR}/dfsan_abilist.txt
+        DESTINATION ${LIBCLANG_INSTALL_PATH})
 
 add_subdirectory(lit_tests)

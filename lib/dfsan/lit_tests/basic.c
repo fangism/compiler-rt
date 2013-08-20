@@ -1,4 +1,5 @@
 // RUN: %clang_dfsan -m64 %s -o %t && %t
+// RUN: %clang_dfsan -mllvm -dfsan-args-abi -m64 %s -o %t && %t
 
 // Tests that labels are propagated through loads and stores.
 
@@ -12,6 +13,9 @@ int main(void) {
 
   dfsan_label new_label = dfsan_get_label(i);
   assert(i_label == new_label);
+
+  dfsan_label read_label = dfsan_read_label(&i, sizeof(i));
+  assert(i_label == read_label);
 
   return 0;
 }

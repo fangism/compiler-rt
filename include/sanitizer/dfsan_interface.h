@@ -39,6 +39,10 @@ struct dfsan_label_info {
   void *userdata;
 };
 
+/// Computes the union of \c l1 and \c l2, possibly creating a union label in
+/// the process.
+dfsan_label dfsan_union(dfsan_label l1, dfsan_label l2);
+
 /// Creates and returns a base label with the given description and user data.
 dfsan_label dfsan_create_label(const char *desc, void *userdata);
 
@@ -57,6 +61,9 @@ void dfsan_add_label(dfsan_label label, void *addr, size_t size);
 /// value.
 dfsan_label dfsan_get_label(long data);
 
+/// Retrieves the label associated with the data at the given address.
+dfsan_label dfsan_read_label(const void *addr, size_t size);
+
 /// Retrieves a pointer to the dfsan_label_info struct for the given label.
 const struct dfsan_label_info *dfsan_get_label_info(dfsan_label label);
 
@@ -71,7 +78,7 @@ dfsan_label dfsan_has_label_with_desc(dfsan_label label, const char *desc);
 }  // extern "C"
 
 template <typename T>
-void dfsan_set_label(dfsan_label label, T &data) {
+void dfsan_set_label(dfsan_label label, T &data) {  // NOLINT
   dfsan_set_label(label, (void *)&data, sizeof(T));
 }
 
