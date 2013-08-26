@@ -11,7 +11,9 @@
 #include "int_lib.h"
 
 #if __APPLE__
-#if 0
+#include <AvailabilityMacros.h>
+#define	__DARWIN_VERSION__	((MAC_OS_X_VERSION_MIN_REQUIRED - MAC_OS_X_VERSION_10_0)/10 +4)
+#if __DARWIN_VERSION__ >= 9
 /* only appeared in 10.5+ (darwin9) */
   #include <libkern/OSCacheControl.h>
 #else
