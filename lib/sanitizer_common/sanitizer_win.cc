@@ -196,6 +196,11 @@ void SetStackSizeLimitInBytes(uptr limit) {
   UNIMPLEMENTED();
 }
 
+char *FindPathToBinary(const char *name) {
+  // Nothing here for now.
+  return 0;
+}
+
 void SleepForSeconds(int seconds) {
   Sleep(seconds * 1000);
 }

@@ -26,6 +26,7 @@
 #include <assert.h>
 #include <wchar.h>
 #include <math.h>
+#include <malloc.h>
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -55,6 +56,8 @@
 #else
 # define MSAN_HAS_M128 0
 #endif
+
+static const int kPageSize = 4096;
 
 typedef unsigned char      U1;
 typedef unsigned short     U2;  // NOLINT
@@ -2253,6 +2256,31 @@ TEST(MemorySanitizer, posix_memalign) {
   int res = posix_memalign(&p, 4096, 13);
   ASSERT_EQ(0, res);
   EXPECT_NOT_POISONED(p);
+  EXPECT_EQ(0U, (uintptr_t)p % 4096);
+  free(p);
+}
+
+TEST(MemorySanitizer, memalign) {
+  void *p = memalign(4096, 13);
+  EXPECT_EQ(0U, (uintptr_t)p % kPageSize);
+  free(p);
+}
+
+TEST(MemorySanitizer, valloc) {
+  void *a = valloc(100);
+  EXPECT_EQ(0U, (uintptr_t)a % kPageSize);
+  free(a);
+}
+
+TEST(MemorySanitizer, pvalloc) {
+  void *p = pvalloc(kPageSize + 100);
+  EXPECT_EQ(0U, (uintptr_t)p % kPageSize);
+  EXPECT_EQ(2 * kPageSize, __msan_get_allocated_size(p));
+  free(p);
+
+  p = pvalloc(0);  // pvalloc(0) should allocate at least one page.
+  EXPECT_EQ(0U, (uintptr_t)p % kPageSize);
+  EXPECT_EQ(kPageSize, __msan_get_allocated_size(p));
   free(p);
 }
 
@@ -2895,6 +2923,13 @@ TEST(MemorySanitizer, CallocOverflow) {
   volatile size_t kArraySize2 = kMaxSizeT / kArraySize + 10;
   void *p = calloc(kArraySize, kArraySize2);  // Should return 0.
   EXPECT_EQ(0L, Ident(p));
+}
+
+TEST(MemorySanitizer, Select) {
+  int x;
+  int volatile* p = &x;
+  int z = *p ? 1 : 0;
+  EXPECT_POISONED(z);
 }
 
 TEST(MemorySanitizerStress, DISABLED_MallocStackTrace) {

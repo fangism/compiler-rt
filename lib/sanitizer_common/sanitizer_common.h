@@ -107,6 +107,8 @@ void SetLowLevelAllocateCallback(LowLevelAllocateCallback callback);
 // IO
 void RawWrite(const char *buffer);
 bool PrintsToTty();
+// Caching version of PrintsToTty(). Not thread-safe.
+bool PrintsToTtyCached();
 void Printf(const char *format, ...);
 void Report(const char *format, ...);
 void SetPrintfAndReportCallback(void (*callback)(const char *));
@@ -134,6 +136,7 @@ bool FileExists(const char *filename);
 const char *GetEnv(const char *name);
 bool SetEnv(const char *name, const char *value);
 const char *GetPwd();
+char *FindPathToBinary(const char *name);
 u32 GetUid();
 void ReExec();
 bool StackSizeIsUnlimited();
