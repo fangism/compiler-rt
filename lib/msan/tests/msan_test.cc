@@ -672,6 +672,18 @@ TEST(MemorySanitizer, stat) {
   EXPECT_NOT_POISONED(st->st_size);
 }
 
+TEST(MemorySanitizer, fstatat) {
+  struct stat* st = new struct stat;
+  int dirfd = open("/proc/self", O_RDONLY);
+  assert(dirfd > 0);
+  int res = fstatat(dirfd, "stat", st, 0);
+  assert(!res);
+  EXPECT_NOT_POISONED(st->st_dev);
+  EXPECT_NOT_POISONED(st->st_mode);
+  EXPECT_NOT_POISONED(st->st_size);
+  close(dirfd);
+}
+
 TEST(MemorySanitizer, statfs) {
   struct statfs* st = new struct statfs;
   int res = statfs("/", st);
@@ -2921,7 +2933,9 @@ TEST(MemorySanitizer, CallocOverflow) {
   size_t kArraySize = 4096;
   volatile size_t kMaxSizeT = std::numeric_limits<size_t>::max();
   volatile size_t kArraySize2 = kMaxSizeT / kArraySize + 10;
-  void *p = calloc(kArraySize, kArraySize2);  // Should return 0.
+  void *p = 0;
+  EXPECT_DEATH(p = calloc(kArraySize, kArraySize2),
+               "llocator is terminating the process instead of returning 0");
   EXPECT_EQ(0L, Ident(p));
 }
 

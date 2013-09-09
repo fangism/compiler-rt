@@ -654,6 +654,7 @@ TEST(AddressSanitizerInterface, PoisoningStressTest) {
       }
     }
   }
+  free(arr);
 }
 
 TEST(AddressSanitizerInterface, PoisonedRegion) {
@@ -759,20 +760,15 @@ TEST(AddressSanitizerInterface, GetOwnershipStressTest) {
     free(pointers[i]);
 }
 
-TEST(AddressSanitizerInterface, CallocOverflow) {
-  size_t kArraySize = 4096;
-  volatile size_t kMaxSizeT = std::numeric_limits<size_t>::max();
-  volatile size_t kArraySize2 = kMaxSizeT / kArraySize + 10;
-  void *p = calloc(kArraySize, kArraySize2);  // Should return 0.
-  EXPECT_EQ(0L, Ident(p));
-}
 
-TEST(AddressSanitizerInterface, CallocOverflow2) {
+TEST(AddressSanitizerInterface, CallocOverflow32) {
 #if SANITIZER_WORDSIZE == 32
   size_t kArraySize = 112;
   volatile size_t kArraySize2 = 43878406;
-  void *p = calloc(kArraySize, kArraySize2);  // Should return 0.
-  EXPECT_EQ(0L, Ident(p));
+  void *p = 0;
+  EXPECT_DEATH(p = calloc(kArraySize, kArraySize2),
+               "allocator is terminating the process instead of returning 0");
+  assert(!p);
 #endif
 }
 
