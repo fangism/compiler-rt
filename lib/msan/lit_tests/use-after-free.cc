@@ -18,14 +18,17 @@
 
 #include <stdlib.h>
 int main(int argc, char **argv) {
-  int x;
-  int *volatile p = &x;
-  return *p;
+  int *volatile p = (int *)malloc(sizeof(int));
+  *p = 42;
+  free(p);
+
+  if (*p)
+    exit(0);
   // CHECK: WARNING: MemorySanitizer: use-of-uninitialized-value
-  // CHECK: {{#0 0x.* in main .*stack-origin.cc:}}[[@LINE-2]]
+  // CHECK: {{#0 0x.* in main .*use-after-free.cc:}}[[@LINE-3]]
 
-  // CHECK-ORIGINS: Uninitialized value was created by an allocation of 'x' in the stack frame of function 'main'
-  // CHECK-ORIGINS: {{#0 0x.* in main .*stack-origin.cc:}}[[@LINE-8]]
-
-  // CHECK: SUMMARY: MemorySanitizer: use-of-uninitialized-value {{.*stack-origin.cc:.* main}}
+  // CHECK-ORIGINS: Uninitialized value was created by a heap allocation
+  // CHECK-ORIGINS: {{#0 0x.* in .*free}}
+  // CHECK-ORIGINS: {{#1 0x.* in main .*use-after-free.cc:}}[[@LINE-9]]
+  return 0;
 }

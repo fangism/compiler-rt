@@ -138,6 +138,7 @@ void StatOutput(u64 *stat) {
   name[StatInt_strcpy]                   = "  strcpy                          ";
   name[StatInt_strncpy]                  = "  strncpy                         ";
   name[StatInt_strstr]                   = "  strstr                          ";
+  name[StatInt_strdup]                   = "  strdup                          ";
   name[StatInt_strcasecmp]               = "  strcasecmp                      ";
   name[StatInt_strncasecmp]              = "  strncasecmp                     ";
   name[StatInt_atexit]                   = "  atexit                          ";
@@ -169,15 +170,12 @@ void StatOutput(u64 *stat) {
   name[StatInt_pthread_rwlock_timedwrlock]
                                          = "  pthread_rwlock_timedwrlock      ";
   name[StatInt_pthread_rwlock_unlock]    = "  pthread_rwlock_unlock           ";
-  name[StatInt_pthread_cond_init_2_3_2]  = "  pthread_cond_init               ";
-  name[StatInt_pthread_cond_destroy_2_3_2]
-                                         = "  pthread_cond_destroy            ";
-  name[StatInt_pthread_cond_signal_2_3_2]= "  pthread_cond_signal             ";
-  name[StatInt_pthread_cond_broadcast_2_3_2]
-                                         = "  pthread_cond_broadcast          ";
-  name[StatInt_pthread_cond_wait_2_3_2]  = "  pthread_cond_wait               ";
-  name[StatInt_pthread_cond_timedwait_2_3_2]
-                                         = "  pthread_cond_timedwait          ";
+  name[StatInt_pthread_cond_init]        = "  pthread_cond_init               ";
+  name[StatInt_pthread_cond_destroy]     = "  pthread_cond_destroy            ";
+  name[StatInt_pthread_cond_signal]      = "  pthread_cond_signal             ";
+  name[StatInt_pthread_cond_broadcast]   = "  pthread_cond_broadcast          ";
+  name[StatInt_pthread_cond_wait]        = "  pthread_cond_wait               ";
+  name[StatInt_pthread_cond_timedwait]   = "  pthread_cond_timedwait          ";
   name[StatInt_pthread_barrier_init]     = "  pthread_barrier_init            ";
   name[StatInt_pthread_barrier_destroy]  = "  pthread_barrier_destroy         ";
   name[StatInt_pthread_barrier_wait]     = "  pthread_barrier_wait            ";

@@ -58,8 +58,8 @@ static THREADLOCAL struct {
   uptr stack_top, stack_bottom;
 } __msan_stack_bounds;
 
-static THREADLOCAL bool is_in_symbolizer;
-static THREADLOCAL bool is_in_loader;
+static THREADLOCAL int is_in_symbolizer;
+static THREADLOCAL int is_in_loader;
 
 extern "C" SANITIZER_WEAK_ATTRIBUTE const int __msan_track_origins;
 
@@ -87,12 +87,12 @@ static bool IsRunningUnderDr() {
   return result;
 }
 
-void EnterSymbolizer() { is_in_symbolizer = true; }
-void ExitSymbolizer()  { is_in_symbolizer = false; }
+void EnterSymbolizer() { ++is_in_symbolizer; }
+void ExitSymbolizer()  { --is_in_symbolizer; }
 bool IsInSymbolizer() { return is_in_symbolizer; }
 
-void EnterLoader() { is_in_loader = true; }
-void ExitLoader()  { is_in_loader = false; }
+void EnterLoader() { ++is_in_loader; }
+void ExitLoader()  { --is_in_loader; }
 
 extern "C" {
 SANITIZER_INTERFACE_ATTRIBUTE
@@ -122,6 +122,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->poison_heap_with_zeroes, "poison_heap_with_zeroes");
   ParseFlag(str, &f->poison_stack_with_zeroes, "poison_stack_with_zeroes");
   ParseFlag(str, &f->poison_in_malloc, "poison_in_malloc");
+  ParseFlag(str, &f->poison_in_malloc, "poison_in_free");
   ParseFlag(str, &f->exit_code, "exit_code");
   if (f->exit_code < 0 || f->exit_code > 127) {
     Printf("Exit code not in [0, 128) range: %d\n", f->exit_code);
@@ -153,6 +154,7 @@ static void InitializeFlags(Flags *f, const char *options) {
   f->poison_heap_with_zeroes = false;
   f->poison_stack_with_zeroes = false;
   f->poison_in_malloc = true;
+  f->poison_in_free = true;
   f->exit_code = 77;
   f->report_umrs = true;
   f->verbosity = 0;

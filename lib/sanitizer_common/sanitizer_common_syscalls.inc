@@ -25,6 +25,12 @@
 //   COMMON_SYSCALL_POST_WRITE_RANGE
 //          Called in posthook for regions that were written to by the kernel
 //          and are now initialized.
+//   COMMON_SYSCALL_FD_CLOSE(fd)
+//          Called before closing file descriptor fd.
+//   COMMON_SYSCALL_PRE_FORK()
+//          Called before fork syscall.
+//   COMMON_SYSCALL_POST_FORK(long res)
+//          Called after fork syscall.
 //===----------------------------------------------------------------------===//
 
 #include "sanitizer_platform.h"
@@ -42,6 +48,17 @@
 #define POST_READ(p, s) COMMON_SYSCALL_POST_READ_RANGE(p, s)
 #define POST_WRITE(p, s) COMMON_SYSCALL_POST_WRITE_RANGE(p, s)
 
+#ifndef COMMON_SYSCALL_FD_CLOSE
+# define COMMON_SYSCALL_FD_CLOSE(fd)
+#endif
+
+#ifndef COMMON_SYSCALL_PRE_FORK
+# define COMMON_SYSCALL_PRE_FORK()
+#endif
+
+#ifndef COMMON_SYSCALL_POST_FORK
+# define COMMON_SYSCALL_POST_FORK(res)
+#endif
 
 // FIXME: do some kind of PRE_READ for all syscall arguments (int(s) and such).
 
@@ -1312,7 +1329,9 @@ PRE_SYSCALL(open)(const void *filename, long flags, long mode) {
 
 POST_SYSCALL(open)(long res, const void *filename, long flags, long mode) {}
 
-PRE_SYSCALL(close)(long fd) {}
+PRE_SYSCALL(close)(long fd) {
+  COMMON_SYSCALL_FD_CLOSE((int)fd);
+}
 
 POST_SYSCALL(close)(long res, long fd) {}
 
@@ -2686,6 +2705,22 @@ POST_SYSCALL(process_vm_writev)(long res, long pid,
   if (res >= 0) {
     if (lvec) kernel_read_iovec(lvec, liovcnt, res);
   }
+}
+
+PRE_SYSCALL(fork)() {
+  COMMON_SYSCALL_PRE_FORK();
+}
+
+POST_SYSCALL(fork)(long res) {
+  COMMON_SYSCALL_POST_FORK(res);
+}
+
+PRE_SYSCALL(vfork)() {
+  COMMON_SYSCALL_PRE_FORK();
+}
+
+POST_SYSCALL(vfork)(long res) {
+  COMMON_SYSCALL_POST_FORK(res);
 }
 }  // extern "C"
 
