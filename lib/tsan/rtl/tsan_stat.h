@@ -356,6 +356,16 @@ enum StatType {
   StatInt_scandir,
   StatInt_scandir64,
   StatInt_getgroups,
+  StatInt_wordexp,
+  StatInt_sigwait,
+  StatInt_sigwaitinfo,
+  StatInt_sigtimedwait,
+  StatInt_sigemptyset,
+  StatInt_sigfillset,
+  StatInt_sigpending,
+  StatInt_sigprocmask,
+  StatInt_backtrace,
+  StatInt_backtrace_symbols,
 
   // Dynamic annotations.
   StatAnnotation,
