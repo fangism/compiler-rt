@@ -1112,6 +1112,15 @@ struct MSanInterceptorContext {
   bool in_interceptor_scope;
 };
 
+namespace __msan {
+
+int OnExit() {
+  // FIXME: ask frontend whether we need to return failure.
+  return 0;
+}
+
+}  // namespace __msan
+
 // A version of CHECK_UNPOISED using a saved scope value. Used in common
 // interceptors.
 #define CHECK_UNPOISONED_CTX(ctx, x, n)                         \
@@ -1126,10 +1135,13 @@ struct MSanInterceptorContext {
   __msan_unpoison(ptr, size)
 #define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size) \
   CHECK_UNPOISONED_CTX(ctx, ptr, size)
+#define COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, ptr, size) \
+  __msan_unpoison(ptr, size)
 #define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)              \
   if (msan_init_is_running) return REAL(func)(__VA_ARGS__);   \
   MSanInterceptorContext msan_ctx = {IsInInterceptorScope()}; \
   ctx = (void *)&msan_ctx;                                    \
+  (void)ctx;                                                  \
   InterceptorScope interceptor_scope;                         \
   ENSURE_MSAN_INITED();
 #define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) \
@@ -1145,6 +1157,7 @@ struct MSanInterceptorContext {
   do {                                                \
   } while (false)  // FIXME
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) REAL(name)
+#define COMMON_INTERCEPTOR_ON_EXIT(ctx) OnExit()
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) CHECK_UNPOISONED(p, s)

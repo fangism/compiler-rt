@@ -15,9 +15,11 @@
 //   COMMON_INTERCEPTOR_ENTER
 //   COMMON_INTERCEPTOR_READ_RANGE
 //   COMMON_INTERCEPTOR_WRITE_RANGE
+//   COMMON_INTERCEPTOR_INITIALIZE_RANGE
 //   COMMON_INTERCEPTOR_FD_ACQUIRE
 //   COMMON_INTERCEPTOR_FD_RELEASE
 //   COMMON_INTERCEPTOR_SET_THREAD_NAME
+//   COMMON_INTERCEPTOR_ON_EXIT
 //===----------------------------------------------------------------------===//
 #include "interception/interception.h"
 #include "sanitizer_platform_interceptors.h"
@@ -27,6 +29,10 @@
 #if SANITIZER_WINDOWS
 #define va_copy(dst, src) ((dst) = (src))
 #endif // _WIN32
+
+#ifndef COMMON_INTERCEPTOR_INITIALIZE_RANGE
+# define COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, p, size)
+#endif
 
 #if SANITIZER_INTERCEPT_STRCMP
 static inline int CharCmpX(unsigned char c1, unsigned char c2) {
@@ -403,43 +409,53 @@ INTERCEPTOR(unsigned long, time, unsigned long *t) {
 
 
 #if SANITIZER_INTERCEPT_LOCALTIME_AND_FRIENDS
-INTERCEPTOR(void *, localtime, unsigned long *timep) {
+static void unpoison_tm(void *ctx, __sanitizer_tm *tm) {
+  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, tm, sizeof(*tm));
+  if (tm->tm_zone) {
+    // Can not use COMMON_INTERCEPTOR_WRITE_RANGE here, because tm->tm_zone
+    // can point to shared memory and tsan would report a data race.
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, tm->tm_zone,
+                                        REAL(strlen(tm->tm_zone)) + 1);
+  }
+}
+
+INTERCEPTOR(__sanitizer_tm *, localtime, unsigned long *timep) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, localtime, timep);
-  void *res = REAL(localtime)(timep);
+  __sanitizer_tm *res = REAL(localtime)(timep);
   if (res) {
     COMMON_INTERCEPTOR_READ_RANGE(ctx, timep, sizeof(*timep));
-    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, struct_tm_sz);
+    unpoison_tm(ctx, res);
   }
   return res;
 }
-INTERCEPTOR(void *, localtime_r, unsigned long *timep, void *result) {
+INTERCEPTOR(__sanitizer_tm *, localtime_r, unsigned long *timep, void *result) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, localtime_r, timep, result);
-  void *res = REAL(localtime_r)(timep, result);
+  __sanitizer_tm *res = REAL(localtime_r)(timep, result);
   if (res) {
     COMMON_INTERCEPTOR_READ_RANGE(ctx, timep, sizeof(*timep));
-    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, struct_tm_sz);
+    unpoison_tm(ctx, res);
   }
   return res;
 }
-INTERCEPTOR(void *, gmtime, unsigned long *timep) {
+INTERCEPTOR(__sanitizer_tm *, gmtime, unsigned long *timep) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, gmtime, timep);
-  void *res = REAL(gmtime)(timep);
+  __sanitizer_tm *res = REAL(gmtime)(timep);
   if (res) {
     COMMON_INTERCEPTOR_READ_RANGE(ctx, timep, sizeof(*timep));
-    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, struct_tm_sz);
+    unpoison_tm(ctx, res);
   }
   return res;
 }
-INTERCEPTOR(void *, gmtime_r, unsigned long *timep, void *result) {
+INTERCEPTOR(__sanitizer_tm *, gmtime_r, unsigned long *timep, void *result) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, gmtime_r, timep, result);
-  void *res = REAL(gmtime_r)(timep, result);
+  __sanitizer_tm *res = REAL(gmtime_r)(timep, result);
   if (res) {
     COMMON_INTERCEPTOR_READ_RANGE(ctx, timep, sizeof(*timep));
-    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, struct_tm_sz);
+    unpoison_tm(ctx, res);
   }
   return res;
 }
@@ -463,22 +479,22 @@ INTERCEPTOR(char *, ctime_r, unsigned long *timep, char *result) {
   }
   return res;
 }
-INTERCEPTOR(char *, asctime, void *tm) {
+INTERCEPTOR(char *, asctime, __sanitizer_tm *tm) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, asctime, tm);
   char *res = REAL(asctime)(tm);
   if (res) {
-    COMMON_INTERCEPTOR_READ_RANGE(ctx, tm, struct_tm_sz);
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, tm, sizeof(*tm));
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, REAL(strlen)(res) + 1);
   }
   return res;
 }
-INTERCEPTOR(char *, asctime_r, void *tm, char *result) {
+INTERCEPTOR(char *, asctime_r, __sanitizer_tm *tm, char *result) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, asctime_r, tm, result);
   char *res = REAL(asctime_r)(tm, result);
   if (res) {
-    COMMON_INTERCEPTOR_READ_RANGE(ctx, tm, struct_tm_sz);
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, tm, sizeof(*tm));
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, REAL(strlen)(res) + 1);
   }
   return res;
@@ -1139,10 +1155,10 @@ INTERCEPTOR(struct __sanitizer_hostent *, gethostbyaddr, void *addr, int len,
   return res;
 }
 
-INTERCEPTOR(struct __sanitizer_hostent *, gethostent) {
+INTERCEPTOR(struct __sanitizer_hostent *, gethostent, int fake) {
   void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, gethostent);
-  struct __sanitizer_hostent *res = REAL(gethostent)();
+  COMMON_INTERCEPTOR_ENTER(ctx, gethostent, fake);
+  struct __sanitizer_hostent *res = REAL(gethostent)(fake);
   if (res) write_hostent(ctx, res);
   return res;
 }
@@ -1546,10 +1562,10 @@ INTERCEPTOR(char *, getcwd, char *buf, SIZE_T size) {
 #endif
 
 #if SANITIZER_INTERCEPT_GET_CURRENT_DIR_NAME
-INTERCEPTOR(char *, get_current_dir_name) {
+INTERCEPTOR(char *, get_current_dir_name, int fake) {
   void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, get_current_dir_name);
-  char *res = REAL(get_current_dir_name)();
+  COMMON_INTERCEPTOR_ENTER(ctx, get_current_dir_name, fake);
+  char *res = REAL(get_current_dir_name)(fake);
   if (res)
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, REAL(strlen)(res) + 1);
   return res;
@@ -2144,6 +2160,20 @@ INTERCEPTOR(char **, backtrace_symbols, void **buffer, int size) {
 #define INIT_BACKTRACE
 #endif
 
+#if SANITIZER_INTERCEPT__EXIT
+INTERCEPTOR(void, _exit, int status) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, _exit, status);
+  int status1 = COMMON_INTERCEPTOR_ON_EXIT(ctx);
+  if (status == 0)
+    status = status1;
+  REAL(_exit)(status);
+}
+#define INIT__EXIT INTERCEPT_FUNCTION(_exit);
+#else
+#define INIT__EXIT
+#endif
+
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_STRCMP;                             \
   INIT_STRNCMP;                            \
@@ -2220,4 +2250,6 @@ INTERCEPTOR(char **, backtrace_symbols, void **buffer, int size) {
   INIT_SIGSETOPS;                          \
   INIT_SIGPENDING;                         \
   INIT_SIGPROCMASK;                        \
-  INIT_BACKTRACE;
+  INIT_BACKTRACE;                          \
+  INIT__EXIT;                              \
+/**/

@@ -130,16 +130,37 @@ static void BackgroundThread(void *arg) {
   }
 
   u64 last_flush = NanoTime();
+  uptr last_rss = 0;
   for (int i = 0; ; i++) {
     SleepForSeconds(1);
     u64 now = NanoTime();
 
     // Flush memory if requested.
-    if (flags()->flush_memory_ms) {
+    if (flags()->flush_memory_ms > 0) {
       if (last_flush + flags()->flush_memory_ms * kMs2Ns < now) {
+        if (flags()->verbosity > 0)
+          Printf("ThreadSanitizer: periodic memory flush\n");
         FlushShadowMemory();
         last_flush = NanoTime();
       }
+    }
+    if (flags()->memory_limit_mb > 0) {
+      uptr rss = GetRSS();
+      uptr limit = uptr(flags()->memory_limit_mb) << 20;
+      if (flags()->verbosity > 0) {
+        Printf("ThreadSanitizer: memory flush check"
+               " RSS=%llu LAST=%llu LIMIT=%llu\n",
+               (u64)rss>>20, (u64)last_rss>>20, (u64)limit>>20);
+      }
+      if (2 * rss > limit + last_rss) {
+        if (flags()->verbosity > 0)
+          Printf("ThreadSanitizer: flushing memory due to RSS\n");
+        FlushShadowMemory();
+        rss = GetRSS();
+        if (flags()->verbosity > 0)
+          Printf("ThreadSanitizer: memory flushed RSS=%llu\n", (u64)rss>>20);
+      }
+      last_rss = rss;
     }
 
     // Write memory profile if requested.
@@ -214,14 +235,16 @@ void Initialize(ThreadState *thr) {
     __sanitizer_set_report_path(flags()->log_path);
   InitializeSuppressions();
 #ifndef TSAN_GO
+  InitializeLibIgnore();
   // Initialize external symbolizer before internal threads are started.
   const char *external_symbolizer = flags()->external_symbolizer_path;
-  if (external_symbolizer != 0 && external_symbolizer[0] != '\0') {
-    if (!getSymbolizer()->InitializeExternal(external_symbolizer)) {
-      Printf("Failed to start external symbolizer: '%s'\n",
-             external_symbolizer);
-      Die();
-    }
+  bool symbolizer_started =
+      getSymbolizer()->InitializeExternal(external_symbolizer);
+  if (external_symbolizer != 0 && external_symbolizer[0] != '\0' &&
+      !symbolizer_started) {
+    Printf("Failed to start external symbolizer: '%s'\n",
+           external_symbolizer);
+    Die();
   }
 #endif
   internal_start_thread(&BackgroundThread, 0);
