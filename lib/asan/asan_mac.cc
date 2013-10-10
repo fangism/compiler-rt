@@ -35,33 +35,62 @@
 #include <pthread.h>
 #include <stdlib.h>  // for free()
 #include <unistd.h>
+#ifdef __APPLE__
 #include <libkern/OSAtomic.h>
+#endif
 
+#ifdef __APPLE__
+#define	__DARWIN_VERSION__	((MAC_OS_X_VERSION_MIN_REQUIRED - MAC_OS_X_VERSION_10_0)/10 +4)
+#else
+#define	__DARWIN_VERSION__      0
+#endif
+
+// Looks like blocks/dispatch became available 10.6 and later.
 #if defined(__GNUC__) && (__GNUC__ == 4) && (__GNUC_MINOR__ < 2)
 #define	MISSING_BLOCKS_SUPPORT
 #endif
 
 namespace __asan {
 
+// adjusting for different struct member names on darwin8
+// see /usr/include/i386/_structs.h on darwin9+
+// see /usr/include/i386/ucontext.h on darwin8
+#if	__DARWIN_VERSION__ && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
+#define	STATE_MEM		ss
+#else
+#define	STATE_MEM		__ss
+#endif
+
+// see /usr/include/mach/i386/_structs.h on darwin9+
+// see /usr/include/mach/i386/thread_status.h on darwin8
+#if	defined(__APPLE__) && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
+#define	THREAD_MEM(x)	x
+#else
+#define	THREAD_MEM(x)	__ ## x
+#endif
+
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   ucontext_t *ucontext = (ucontext_t*)context;
 #if defined(__ppc__) || defined(__ppc64__)
-  *pc = ucontext->uc_mcontext->ss.srr0;
-  *bp = ucontext->uc_mcontext->ss.r1;		// or r31
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(srr0);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);		// or r31
 	// powerpc has no dedicated frame pointer
-  *sp = ucontext->uc_mcontext->ss.r1;
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);
 #else
 # if SANITIZER_WORDSIZE == 64
-  *pc = ucontext->uc_mcontext->__ss.__rip;
-  *bp = ucontext->uc_mcontext->__ss.__rbp;
-  *sp = ucontext->uc_mcontext->__ss.__rsp;
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rbp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rsp);
 # else
-  *pc = ucontext->uc_mcontext->__ss.__eip;
-  *bp = ucontext->uc_mcontext->__ss.__ebp;
-  *sp = ucontext->uc_mcontext->__ss.__esp;
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(eip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(ebp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(esp);
 # endif  // SANITIZER_WORDSIZE
 #endif
 }
+
+#undef	STATE_MEM
+#undef	THREAD_MEM
 
 int GetMacosVersion() {
   int mib[2] = { CTL_KERN, KERN_OSRELEASE };
@@ -73,6 +102,7 @@ int GetMacosVersion() {
   CHECK_LT(len, maxlen);
   CHECK_NE(sysctl(mib, 2, version, &len, 0, 0), -1);
   switch (version[0]) {
+    case '8': return MACOS_VERSION_TIGER;
     case '9': return MACOS_VERSION_LEOPARD;
     case '1': {
       switch (version[1]) {
