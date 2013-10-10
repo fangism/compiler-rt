@@ -65,33 +65,33 @@ namespace __asan {
 // see /usr/include/mach/i386/_structs.h on darwin9+
 // see /usr/include/mach/i386/thread_status.h on darwin8
 #if	defined(__APPLE__) && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
-#define	X86_THREAD_MEM(x)	x
+#define	THREAD_MEM(x)	x
 #else
-#define	X86_THREAD_MEM(x)	__ ## x
+#define	THREAD_MEM(x)	__ ## x
 #endif
 
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   ucontext_t *ucontext = (ucontext_t*)context;
 #if defined(__ppc__) || defined(__ppc64__)
-  *pc = ucontext->uc_mcontext->STATE_MEM.srr0;
-  *bp = ucontext->uc_mcontext->STATE_MEM.r1;		// or r31
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(srr0);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);		// or r31
 	// powerpc has no dedicated frame pointer
-  *sp = ucontext->uc_mcontext->STATE_MEM.r1;
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);
 #else
 # if SANITIZER_WORDSIZE == 64
-  *pc = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(rip);
-  *bp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(rbp);
-  *sp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(rsp);
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rbp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rsp);
 # else
-  *pc = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(eip);
-  *bp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(ebp);
-  *sp = ucontext->uc_mcontext->STATE_MEM.X86_THREAD_MEM(esp);
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(eip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(ebp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(esp);
 # endif  // SANITIZER_WORDSIZE
 #endif
 }
 
 #undef	STATE_MEM
-#undef	X86_THREAD_MEM
+#undef	THREAD_MEM
 
 MacosVersion cached_macos_version = MACOS_VERSION_UNINITIALIZED;
 
