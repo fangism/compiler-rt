@@ -165,7 +165,13 @@ thread_return_t AsanThread::ThreadStart(uptr os_id) {
   malloc_storage().CommitBack();
   if (flags()->use_sigaltstack) UnsetAlternateSignalStack();
 
-  this->Destroy();
+  // On POSIX systems we defer this to the TSD destructor. LSan will consider
+  // the thread's memory as non-live from the moment we call Destroy(), even
+  // though that memory might contain pointers to heap objects which will be
+  // cleaned up by a user-defined TSD destructor. Thus, calling Destroy() before
+  // the TSD destructors have run might cause false positives in LSan.
+  if (!SANITIZER_POSIX)
+    this->Destroy();
 
   return res;
 }
@@ -288,6 +294,13 @@ void EnsureMainThreadIDIsCorrect() {
   if (context && (context->tid == 0))
     context->os_id = GetTid();
 }
+
+__asan::AsanThread *GetAsanThreadByOsIDLocked(uptr os_id) {
+  __asan::AsanThreadContext *context = static_cast<__asan::AsanThreadContext *>(
+      __asan::asanThreadRegistry().FindThreadContextByOsIDLocked(os_id));
+  if (!context) return 0;
+  return context->thread;
+}
 }  // namespace __asan
 
 // --- Implementation of LSan-specific functions --- {{{1
@@ -295,10 +308,7 @@ namespace __lsan {
 bool GetThreadRangesLocked(uptr os_id, uptr *stack_begin, uptr *stack_end,
                            uptr *tls_begin, uptr *tls_end,
                            uptr *cache_begin, uptr *cache_end) {
-  __asan::AsanThreadContext *context = static_cast<__asan::AsanThreadContext *>(
-      __asan::asanThreadRegistry().FindThreadContextByOsIDLocked(os_id));
-  if (!context) return false;
-  __asan::AsanThread *t = context->thread;
+  __asan::AsanThread *t = __asan::GetAsanThreadByOsIDLocked(os_id);
   if (!t) return false;
   *stack_begin = t->stack_bottom();
   *stack_end = t->stack_top();
@@ -308,6 +318,13 @@ bool GetThreadRangesLocked(uptr os_id, uptr *stack_begin, uptr *stack_end,
   *cache_begin = 0;
   *cache_end = 0;
   return true;
+}
+
+void ForEachExtraStackRange(uptr os_id, RangeIteratorCallback callback,
+                            void *arg) {
+  __asan::AsanThread *t = __asan::GetAsanThreadByOsIDLocked(os_id);
+  if (t && t->has_fake_stack())
+    t->fake_stack()->ForEachFakeFrame(callback, arg);
 }
 
 void LockThreadRegistry() {

@@ -39,9 +39,13 @@ THREADLOCAL char cur_thread_placeholder[sizeof(ThreadState)] ALIGNED(64);
 static char ctx_placeholder[sizeof(Context)] ALIGNED(64);
 
 // Can be overriden by a front-end.
-bool CPP_WEAK OnFinalize(bool failed) {
+#ifdef TSAN_EXTERNAL_HOOKS
+bool OnFinalize(bool failed);
+#else
+bool WEAK OnFinalize(bool failed) {
   return failed;
 }
+#endif
 
 static Context *ctx;
 Context *CTX() {
@@ -699,7 +703,7 @@ void FuncExit(ThreadState *thr) {
 void ThreadIgnoreBegin(ThreadState *thr) {
   DPrintf("#%d: ThreadIgnoreBegin\n", thr->tid);
   thr->ignore_reads_and_writes++;
-  CHECK_GE(thr->ignore_reads_and_writes, 0);
+  CHECK_GT(thr->ignore_reads_and_writes, 0);
   thr->fast_state.SetIgnoreBit();
 }
 
@@ -709,6 +713,18 @@ void ThreadIgnoreEnd(ThreadState *thr) {
   CHECK_GE(thr->ignore_reads_and_writes, 0);
   if (thr->ignore_reads_and_writes == 0)
     thr->fast_state.ClearIgnoreBit();
+}
+
+void ThreadIgnoreSyncBegin(ThreadState *thr) {
+  DPrintf("#%d: ThreadIgnoreSyncBegin\n", thr->tid);
+  thr->ignore_sync++;
+  CHECK_GT(thr->ignore_sync, 0);
+}
+
+void ThreadIgnoreSyncEnd(ThreadState *thr) {
+  DPrintf("#%d: ThreadIgnoreSyncEnd\n", thr->tid);
+  thr->ignore_sync--;
+  CHECK_GE(thr->ignore_sync, 0);
 }
 
 bool MD5Hash::operator==(const MD5Hash &other) const {

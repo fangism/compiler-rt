@@ -15,6 +15,7 @@
 #ifndef SANITIZER_PLATFORM_LIMITS_POSIX_H
 #define SANITIZER_PLATFORM_LIMITS_POSIX_H
 
+#include "sanitizer_internal_defs.h"
 #include "sanitizer_platform.h"
 
 #define is_powerpc	(defined(__ppc__) || defined(__powerpc__) || defined(__POWERPC__))
@@ -835,6 +836,7 @@ namespace __sanitizer {
   extern unsigned IOCTL_TIOCSERSETMULTI;
   extern unsigned IOCTL_TIOCSSERIAL;
 #endif
+
 }  // namespace __sanitizer
 
 #endif

@@ -853,7 +853,8 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
   {
     ThreadState *thr = cur_thread();
     ScopedInRtl in_rtl;
-    if (pthread_setspecific(g_thread_finalize_key, (void*)4)) {
+    if (pthread_setspecific(g_thread_finalize_key,
+                            (void *)kPthreadDestructorIterations)) {
       Printf("ThreadSanitizer: failed to set thread key\n");
       Die();
     }
@@ -1523,22 +1524,28 @@ TSAN_INTERCEPTOR(int, pipe2, int *pipefd, int flags) {
 
 TSAN_INTERCEPTOR(long_t, send, int fd, void *buf, long_t len, int flags) {
   SCOPED_TSAN_INTERCEPTOR(send, fd, buf, len, flags);
-  if (fd >= 0)
+  if (fd >= 0) {
+    FdAccess(thr, pc, fd);
     FdRelease(thr, pc, fd);
+  }
   int res = REAL(send)(fd, buf, len, flags);
   return res;
 }
 
 TSAN_INTERCEPTOR(long_t, sendmsg, int fd, void *msg, int flags) {
   SCOPED_TSAN_INTERCEPTOR(sendmsg, fd, msg, flags);
-  if (fd >= 0)
+  if (fd >= 0) {
+    FdAccess(thr, pc, fd);
     FdRelease(thr, pc, fd);
+  }
   int res = REAL(sendmsg)(fd, msg, flags);
   return res;
 }
 
 TSAN_INTERCEPTOR(long_t, recv, int fd, void *buf, long_t len, int flags) {
   SCOPED_TSAN_INTERCEPTOR(recv, fd, buf, len, flags);
+  if (fd >= 0)
+    FdAccess(thr, pc, fd);
   int res = REAL(recv)(fd, buf, len, flags);
   if (res >= 0 && fd >= 0) {
     FdAcquire(thr, pc, fd);
@@ -1644,21 +1651,23 @@ TSAN_INTERCEPTOR(void*, opendir, char *path) {
 
 TSAN_INTERCEPTOR(int, epoll_ctl, int epfd, int op, int fd, void *ev) {
   SCOPED_TSAN_INTERCEPTOR(epoll_ctl, epfd, op, fd, ev);
-  if (op == EPOLL_CTL_ADD && epfd >= 0) {
-    FdRelease(thr, pc, epfd);
-  }
-  int res = REAL(epoll_ctl)(epfd, op, fd, ev);
-  if (fd >= 0)
+  if (epfd >= 0)
+    FdAccess(thr, pc, epfd);
+  if (epfd >= 0 && fd >= 0)
     FdAccess(thr, pc, fd);
+  if (op == EPOLL_CTL_ADD && epfd >= 0)
+    FdRelease(thr, pc, epfd);
+  int res = REAL(epoll_ctl)(epfd, op, fd, ev);
   return res;
 }
 
 TSAN_INTERCEPTOR(int, epoll_wait, int epfd, void *ev, int cnt, int timeout) {
   SCOPED_TSAN_INTERCEPTOR(epoll_wait, epfd, ev, cnt, timeout);
+  if (epfd >= 0)
+    FdAccess(thr, pc, epfd);
   int res = BLOCK_REAL(epoll_wait)(epfd, ev, cnt, timeout);
-  if (res > 0 && epfd >= 0) {
+  if (res > 0 && epfd >= 0)
     FdAcquire(thr, pc, epfd);
-  }
   return res;
 }
 
@@ -1898,6 +1907,8 @@ struct TsanInterceptorContext {
   FdAcquire(((TsanInterceptorContext *) ctx)->thr, pc, fd)
 #define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) \
   FdRelease(((TsanInterceptorContext *) ctx)->thr, pc, fd)
+#define COMMON_INTERCEPTOR_FD_ACCESS(ctx, fd) \
+  FdAccess(((TsanInterceptorContext *) ctx)->thr, pc, fd)
 #define COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, newfd) \
   FdSocketAccept(((TsanInterceptorContext *) ctx)->thr, pc, fd, newfd)
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) \

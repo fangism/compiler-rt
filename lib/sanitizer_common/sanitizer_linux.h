@@ -76,7 +76,6 @@ void CacheBinaryName();
 
 // Call cb for each region mapped by map.
 void ForEachMappedRegion(link_map *map, void (*cb)(const void *, uptr));
-
 }  // namespace __sanitizer
 
 #endif  // SANITIZER_LINUX

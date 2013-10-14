@@ -106,8 +106,13 @@ uptr StackTrace::GetCurrentPc() {
 }
 
 void StackTrace::FastUnwindStack(uptr pc, uptr bp,
-                                 uptr stack_top, uptr stack_bottom) {
-  CHECK(size == 0 && trace[0] == pc);
+                                 uptr stack_top, uptr stack_bottom,
+                                 uptr max_depth) {
+  if (max_depth == 0) {
+    size = 0;
+    return;
+  }
+  trace[0] = pc;
   size = 1;
   uhwptr *frame = (uhwptr *)bp;
   uhwptr *prev_frame = frame - 1;
@@ -117,7 +122,7 @@ void StackTrace::FastUnwindStack(uptr pc, uptr bp,
          frame < (uhwptr *)stack_top - 2 &&
          frame > (uhwptr *)stack_bottom &&
          IsAligned((uptr)frame, sizeof(*frame)) &&
-         size < max_size) {
+         size < max_depth) {
     uhwptr pc1 = frame[1];
     if (pc1 != pc) {
       trace[size++] = (uptr) pc1;
@@ -138,7 +143,6 @@ void StackTrace::PopStackFrames(uptr count) {
 // On 32-bits we don't compress stack traces.
 // On 64-bits we compress stack traces: if a given pc differes slightly from
 // the previous one, we record a 31-bit offset instead of the full pc.
-SANITIZER_INTERFACE_ATTRIBUTE
 uptr StackTrace::CompressStack(StackTrace *stack, u32 *compressed, uptr size) {
 #if SANITIZER_WORDSIZE == 32
   // Don't compress, just copy.
@@ -201,7 +205,6 @@ uptr StackTrace::CompressStack(StackTrace *stack, u32 *compressed, uptr size) {
   return res;
 }
 
-SANITIZER_INTERFACE_ATTRIBUTE
 void StackTrace::UncompressStack(StackTrace *stack,
                                  u32 *compressed, uptr size) {
 #if SANITIZER_WORDSIZE == 32
