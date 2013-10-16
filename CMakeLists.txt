@@ -183,7 +183,7 @@ if(APPLE)
   if(COMPILER_RT_USES_LIBCXX)
     set(SANITIZER_MIN_OSX_VERSION 10.7)
   else()
-# darwin9 users will awnt 10.5, of course
+# darwin9 users will want 10.5, of course
     set(SANITIZER_MIN_OSX_VERSION 10.4)
   endif()
   list(APPEND SANITIZER_COMMON_CFLAGS
