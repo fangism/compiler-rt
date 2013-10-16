@@ -264,7 +264,7 @@ static void MlockIsUnsupported() {
   static bool printed = false;
   if (printed) return;
   printed = true;
-  if (flags()->verbosity > 0) {
+  if (common_flags()->verbosity > 0) {
     Printf("INFO: AddressSanitizer ignores "
            "mlock/mlockall/munlock/munlockall\n");
   }
@@ -652,7 +652,7 @@ INTERCEPTOR(int, __cxa_atexit, void (*func)(void *), void *arg,
 
 #if !SANITIZER_MAC
 #define ASAN_INTERCEPT_FUNC(name) do { \
-      if (!INTERCEPT_FUNCTION(name) && flags()->verbosity > 0) \
+      if (!INTERCEPT_FUNCTION(name) && common_flags()->verbosity > 0) \
         Report("AddressSanitizer: failed to intercept '" #name "'\n"); \
     } while (0)
 #else
@@ -772,7 +772,7 @@ void InitializeAsanInterceptors() {
   InitializeWindowsInterceptors();
 #endif
 
-  if (flags()->verbosity > 0) {
+  if (common_flags()->verbosity > 0) {
     Report("AddressSanitizer: libc interceptors initialized\n");
   }
 }

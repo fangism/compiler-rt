@@ -2,18 +2,18 @@
 // By default (allocator_may_return_null=0) the process should crash.
 // With allocator_may_return_null=1 the allocator should return 0.
 //
-// RUN: %clangxx_asan -O0 %s -o %t
+// RUN: %clangxx_msan -O0 %s -o %t
 // RUN: not %t malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mCRASH
-// RUN: ASAN_OPTIONS=allocator_may_return_null=0 not %t malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mCRASH
-// RUN: ASAN_OPTIONS=allocator_may_return_null=1     %t malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mNULL
-// RUN: ASAN_OPTIONS=allocator_may_return_null=0 not %t calloc 2>&1 | FileCheck %s --check-prefix=CHECK-cCRASH
-// RUN: ASAN_OPTIONS=allocator_may_return_null=1     %t calloc 2>&1 | FileCheck %s --check-prefix=CHECK-cNULL
-// RUN: ASAN_OPTIONS=allocator_may_return_null=0 not %t calloc-overflow 2>&1 | FileCheck %s --check-prefix=CHECK-coCRASH
-// RUN: ASAN_OPTIONS=allocator_may_return_null=1     %t calloc-overflow 2>&1 | FileCheck %s --check-prefix=CHECK-coNULL
-// RUN: ASAN_OPTIONS=allocator_may_return_null=0 not %t realloc 2>&1 | FileCheck %s --check-prefix=CHECK-rCRASH
-// RUN: ASAN_OPTIONS=allocator_may_return_null=1     %t realloc 2>&1 | FileCheck %s --check-prefix=CHECK-rNULL
-// RUN: ASAN_OPTIONS=allocator_may_return_null=0 not %t realloc-after-malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mrCRASH
-// RUN: ASAN_OPTIONS=allocator_may_return_null=1     %t realloc-after-malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mrNULL
+// RUN: MSAN_OPTIONS=allocator_may_return_null=0 not %t malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mCRASH
+// RUN: MSAN_OPTIONS=allocator_may_return_null=1     %t malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mNULL
+// RUN: MSAN_OPTIONS=allocator_may_return_null=0 not %t calloc 2>&1 | FileCheck %s --check-prefix=CHECK-cCRASH
+// RUN: MSAN_OPTIONS=allocator_may_return_null=1     %t calloc 2>&1 | FileCheck %s --check-prefix=CHECK-cNULL
+// RUN: MSAN_OPTIONS=allocator_may_return_null=0 not %t calloc-overflow 2>&1 | FileCheck %s --check-prefix=CHECK-coCRASH
+// RUN: MSAN_OPTIONS=allocator_may_return_null=1     %t calloc-overflow 2>&1 | FileCheck %s --check-prefix=CHECK-coNULL
+// RUN: MSAN_OPTIONS=allocator_may_return_null=0 not %t realloc 2>&1 | FileCheck %s --check-prefix=CHECK-rCRASH
+// RUN: MSAN_OPTIONS=allocator_may_return_null=1     %t realloc 2>&1 | FileCheck %s --check-prefix=CHECK-rNULL
+// RUN: MSAN_OPTIONS=allocator_may_return_null=0 not %t realloc-after-malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mrCRASH
+// RUN: MSAN_OPTIONS=allocator_may_return_null=1     %t realloc-after-malloc 2>&1 | FileCheck %s --check-prefix=CHECK-mrNULL
 
 #include <limits.h>
 #include <stdlib.h>
@@ -59,15 +59,15 @@ int main(int argc, char **argv) {
   return x != 0;
 }
 // CHECK-mCRASH: malloc:
-// CHECK-mCRASH: AddressSanitizer's allocator is terminating the process
+// CHECK-mCRASH: MemorySanitizer's allocator is terminating the process
 // CHECK-cCRASH: calloc:
-// CHECK-cCRASH: AddressSanitizer's allocator is terminating the process
+// CHECK-cCRASH: MemorySanitizer's allocator is terminating the process
 // CHECK-coCRASH: calloc-overflow:
-// CHECK-coCRASH: AddressSanitizer's allocator is terminating the process
+// CHECK-coCRASH: MemorySanitizer's allocator is terminating the process
 // CHECK-rCRASH: realloc:
-// CHECK-rCRASH: AddressSanitizer's allocator is terminating the process
+// CHECK-rCRASH: MemorySanitizer's allocator is terminating the process
 // CHECK-mrCRASH: realloc-after-malloc:
-// CHECK-mrCRASH: AddressSanitizer's allocator is terminating the process
+// CHECK-mrCRASH: MemorySanitizer's allocator is terminating the process
 
 // CHECK-mNULL: malloc:
 // CHECK-mNULL: x: 0

@@ -37,8 +37,12 @@ struct CommonFlags {
   bool handle_ioctl;
   // Max number of stack frames kept for each allocation/deallocation.
   int malloc_context_size;
-  // Write logs to "log_path.pid" instead of stderr.
+  // Write logs to "log_path.pid".
+  // The special values are "stdout" and "stderr".
+  // The default is "stderr".
   const char *log_path;
+  // Verbosity level (0 - silent, 1 - a bit of output, 2+ - more output).
+  int  verbosity;
   // Enable memory leak detection.
   bool detect_leaks;
   // Invoke leak checking in an atexit handler. Has no effect if
@@ -49,10 +53,9 @@ struct CommonFlags {
   bool allocator_may_return_null;
 };
 
-extern CommonFlags common_flags_dont_use_directly;
-
 inline CommonFlags *common_flags() {
-  return &common_flags_dont_use_directly;
+  static CommonFlags f;
+  return &f;
 }
 
 void ParseCommonFlagsFromString(const char *str);

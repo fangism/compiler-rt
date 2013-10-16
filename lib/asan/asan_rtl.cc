@@ -92,7 +92,6 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   CHECK((uptr)common_flags()->malloc_context_size <= kStackTraceMax);
 
   ParseFlag(str, &f->quarantine_size, "quarantine_size");
-  ParseFlag(str, &f->verbosity, "verbosity");
   ParseFlag(str, &f->redzone, "redzone");
   CHECK_GE(f->redzone, 16);
   CHECK(IsPowerOfTwo(f->redzone));
@@ -125,6 +124,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->allow_reexec, "allow_reexec");
   ParseFlag(str, &f->print_full_thread_history, "print_full_thread_history");
   ParseFlag(str, &f->poison_heap, "poison_heap");
+  ParseFlag(str, &f->poison_partial, "poison_partial");
   ParseFlag(str, &f->alloc_dealloc_mismatch, "alloc_dealloc_mismatch");
   ParseFlag(str, &f->use_stack_depot, "use_stack_depot");
   ParseFlag(str, &f->strict_memcmp, "strict_memcmp");
@@ -146,7 +146,6 @@ void InitializeFlags(Flags *f, const char *env) {
 
   internal_memset(f, 0, sizeof(*f));
   f->quarantine_size = (ASAN_LOW_MEMORY) ? 1UL << 26 : 1UL << 28;
-  f->verbosity = 0;
   f->redzone = 16;
   f->debug = false;
   f->report_globals = 1;
@@ -174,6 +173,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->allow_reexec = true;
   f->print_full_thread_history = true;
   f->poison_heap = true;
+  f->poison_partial = true;
   // Turn off alloc/dealloc mismatch checker on Mac and Windows for now.
   // TODO(glider,timurrrr): Fix known issues and enable this back.
   f->alloc_dealloc_mismatch = (SANITIZER_MAC == 0) && (SANITIZER_WINDOWS == 0);
@@ -186,7 +186,7 @@ void InitializeFlags(Flags *f, const char *env) {
 
   // Override from user-specified string.
   ParseFlagsFromString(f, MaybeCallAsanDefaultOptions());
-  if (flags()->verbosity) {
+  if (common_flags()->verbosity) {
     Report("Using the defaults from __asan_default_options: %s\n",
            MaybeCallAsanDefaultOptions());
   }
@@ -464,7 +464,7 @@ void __asan_init() {
   __asan_option_detect_stack_use_after_return =
       flags()->detect_stack_use_after_return;
 
-  if (flags()->verbosity && options) {
+  if (common_flags()->verbosity && options) {
     Report("Parsed ASAN_OPTIONS: %s\n", options);
   }
 
@@ -497,7 +497,7 @@ void __asan_init() {
   }
 #endif
 
-  if (flags()->verbosity)
+  if (common_flags()->verbosity)
     PrintAddressSpaceLayout();
 
   if (flags()->disable_core) {
@@ -570,7 +570,7 @@ void __asan_init() {
   }
 #endif  // CAN_SANITIZE_LEAKS
 
-  if (flags()->verbosity) {
+  if (common_flags()->verbosity) {
     Report("AddressSanitizer Init done\n");
   }
 }

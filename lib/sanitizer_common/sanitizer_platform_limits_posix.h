@@ -30,6 +30,7 @@ namespace __sanitizer {
   extern unsigned siginfo_t_sz;
   extern unsigned struct_itimerval_sz;
   extern unsigned pthread_t_sz;
+  extern unsigned pthread_cond_t_sz;
   extern unsigned pid_t_sz;
   extern unsigned timeval_sz;
   extern unsigned uid_t_sz;
@@ -228,6 +229,20 @@ namespace __sanitizer {
 #if SANITIZER_LINUX
     void (*sa_restorer)();
 #endif
+  };
+
+  struct __sanitizer_kernel_sigset_t {
+    u8 sig[8];
+  };
+
+  struct __sanitizer_kernel_sigaction_t {
+    union {
+      void (*sigaction)(int signo, void *info, void *ctx);
+      void (*handler)(int signo);
+    };
+    unsigned long sa_flags;
+    void (*sa_restorer)(void);
+    __sanitizer_kernel_sigset_t sa_mask;
   };
 
   extern uptr sig_ign;

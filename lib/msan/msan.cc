@@ -129,7 +129,6 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
     Die();
   }
   ParseFlag(str, &f->report_umrs, "report_umrs");
-  ParseFlag(str, &f->verbosity, "verbosity");
   ParseFlag(str, &f->wrap_signals, "wrap_signals");
 
   // keep_going is an old name for halt_on_error,
@@ -157,7 +156,6 @@ static void InitializeFlags(Flags *f, const char *options) {
   f->poison_in_free = true;
   f->exit_code = 77;
   f->report_umrs = true;
-  f->verbosity = 0;
   f->wrap_signals = true;
   f->halt_on_error = !&__msan_keep_going;
 
@@ -304,7 +302,7 @@ void __msan_init() {
   InitializeFlags(&msan_flags, msan_options);
   __sanitizer_set_report_path(common_flags()->log_path);
   if (StackSizeIsUnlimited()) {
-    if (flags()->verbosity)
+    if (common_flags()->verbosity)
       Printf("Unlimited stack, doing reexec\n");
     // A reasonably large stack size. It is bigger than the usual 8Mb, because,
     // well, the program could have been run with unlimited stack for a reason.
@@ -312,12 +310,12 @@ void __msan_init() {
     ReExec();
   }
 
-  if (flags()->verbosity)
+  if (common_flags()->verbosity)
     Printf("MSAN_OPTIONS: %s\n", msan_options ? msan_options : "<empty>");
 
   msan_running_under_dr = IsRunningUnderDr();
   __msan_clear_on_return();
-  if (__msan_get_track_origins() && flags()->verbosity > 0)
+  if (__msan_get_track_origins() && common_flags()->verbosity > 0)
     Printf("msan_track_origins\n");
   if (!InitShadow(/* prot1 */ false, /* prot2 */ true, /* map_shadow */ true,
                   __msan_get_track_origins())) {
@@ -341,7 +339,7 @@ void __msan_init() {
   GetThreadStackTopAndBottom(/* at_initialization */true,
                              &__msan_stack_bounds.stack_top,
                              &__msan_stack_bounds.stack_bottom);
-  if (flags()->verbosity)
+  if (common_flags()->verbosity)
     Printf("MemorySanitizer init done\n");
   msan_init_is_running = 0;
   msan_inited = 1;
@@ -518,26 +516,38 @@ u32 __msan_get_umr_origin() {
 
 u16 __sanitizer_unaligned_load16(const uu16 *p) {
   __msan_retval_tls[0] = *(uu16 *)MEM_TO_SHADOW((uptr)p);
+  if (__msan_get_track_origins())
+    __msan_retval_origin_tls = *(uu32 *)MEM_TO_ORIGIN((uptr)p);
   return *p;
 }
 u32 __sanitizer_unaligned_load32(const uu32 *p) {
   __msan_retval_tls[0] = *(uu32 *)MEM_TO_SHADOW((uptr)p);
+  if (__msan_get_track_origins())
+    __msan_retval_origin_tls = *(uu32 *)MEM_TO_ORIGIN((uptr)p);
   return *p;
 }
 u64 __sanitizer_unaligned_load64(const uu64 *p) {
   __msan_retval_tls[0] = *(uu64 *)MEM_TO_SHADOW((uptr)p);
+  if (__msan_get_track_origins())
+    __msan_retval_origin_tls = *(uu32 *)MEM_TO_ORIGIN((uptr)p);
   return *p;
 }
 void __sanitizer_unaligned_store16(uu16 *p, u16 x) {
   *(uu16 *)MEM_TO_SHADOW((uptr)p) = __msan_param_tls[1];
+  if (__msan_get_track_origins())
+    *(uu32 *)MEM_TO_ORIGIN((uptr)p) = __msan_param_origin_tls[1];
   *p = x;
 }
 void __sanitizer_unaligned_store32(uu32 *p, u32 x) {
   *(uu32 *)MEM_TO_SHADOW((uptr)p) = __msan_param_tls[1];
+  if (__msan_get_track_origins())
+    *(uu32 *)MEM_TO_ORIGIN((uptr)p) = __msan_param_origin_tls[1];
   *p = x;
 }
 void __sanitizer_unaligned_store64(uu64 *p, u64 x) {
   *(uu64 *)MEM_TO_SHADOW((uptr)p) = __msan_param_tls[1];
+  if (__msan_get_track_origins())
+    *(uu32 *)MEM_TO_ORIGIN((uptr)p) = __msan_param_origin_tls[1];
   *p = x;
 }
 

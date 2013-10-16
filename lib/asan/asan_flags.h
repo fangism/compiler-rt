@@ -32,8 +32,6 @@ struct Flags {
   // Lower value may reduce memory usage but increase the chance of
   // false negatives.
   int  quarantine_size;
-  // Verbosity level (0 - silent, 1 - a bit of output, 2+ - more output).
-  int  verbosity;
   // Size (in bytes) of redzones around heap objects.
   // Requirement: redzone >= 32, is a power of two.
   int  redzone;
@@ -98,6 +96,9 @@ struct Flags {
   // Poison (or not) the heap memory on [de]allocation. Zero value is useful
   // for benchmarking the allocator or instrumentator.
   bool poison_heap;
+  // If true, poison partially addressable 8-byte aligned words (default=true).
+  // This flag affects heap and global buffers, but not stack buffers.
+  bool poison_partial;
   // Report errors on malloc/delete, new/free, new/delete[], etc.
   bool alloc_dealloc_mismatch;
   // Use stack depot instead of storing stacks in the redzones.

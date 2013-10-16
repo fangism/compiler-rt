@@ -17,6 +17,7 @@
 #if SANITIZER_LINUX
 #include "sanitizer_common.h"
 #include "sanitizer_internal_defs.h"
+#include "sanitizer_platform_limits_posix.h"
 
 struct link_map;  // Opaque type returned by dlopen().
 struct sigaltstack;
@@ -31,6 +32,13 @@ uptr internal_getdents(fd_t fd, struct linux_dirent *dirp, unsigned int count);
 uptr internal_prctl(int option, uptr arg2, uptr arg3, uptr arg4, uptr arg5);
 uptr internal_sigaltstack(const struct sigaltstack* ss,
                           struct sigaltstack* oss);
+uptr internal_sigaction(int signum, const __sanitizer_kernel_sigaction_t *act,
+    __sanitizer_kernel_sigaction_t *oldact);
+uptr internal_sigprocmask(int how, __sanitizer_kernel_sigset_t *set,
+    __sanitizer_kernel_sigset_t *oldset);
+void internal_sigfillset(__sanitizer_kernel_sigset_t *set);
+void internal_sigdelset(__sanitizer_kernel_sigset_t *set, int signum);
+
 #ifdef __x86_64__
 uptr internal_clone(int (*fn)(void *), void *child_stack, int flags, void *arg,
                     int *parent_tidptr, void *newtls, int *child_tidptr);
@@ -58,7 +66,7 @@ class ThreadLister {
   int bytes_read_;
 };
 
-void AdjustStackSizeLinux(void *attr, int verbosity);
+void AdjustStackSizeLinux(void *attr);
 
 // Exposed for testing.
 uptr ThreadDescriptorSize();
