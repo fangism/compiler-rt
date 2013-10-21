@@ -40,9 +40,11 @@ namespace __sanitizer {
   extern unsigned struct_itimerspec_sz;
   extern unsigned struct_sigevent_sz;
   extern unsigned struct_sched_param_sz;
+  extern unsigned struct_statfs_sz;
 
 #if !SANITIZER_ANDROID
   extern unsigned ucontext_t_sz;
+  extern unsigned struct_statfs64_sz;
 #endif // !SANITIZER_ANDROID
 
 #if SANITIZER_LINUX
@@ -63,7 +65,6 @@ namespace __sanitizer {
   extern unsigned struct_ustat_sz;
 
   extern unsigned struct_rlimit_sz;
-  extern unsigned struct_statfs_sz;
   extern unsigned struct_epoll_event_sz;
   extern unsigned struct_sysinfo_sz;
   extern unsigned struct_timespec_sz;
@@ -85,7 +86,8 @@ namespace __sanitizer {
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
   extern unsigned struct_rlimit64_sz;
-  extern unsigned struct_statfs64_sz;
+  extern unsigned struct_statvfs_sz;
+  extern unsigned struct_statvfs64_sz;
 #endif // SANITIZER_LINUX && !SANITIZER_ANDROID
 
   struct __sanitizer_iovec {
@@ -112,6 +114,17 @@ namespace __sanitizer {
     long int tm_gmtoff;
     const char *tm_zone;
   };
+
+#if SANITIZER_LINUX
+  struct __sanitizer_mntent {
+    char *mnt_fsname;
+    char *mnt_dir;
+    char *mnt_type;
+    char *mnt_opts;
+    int mnt_freq;
+    int mnt_passno;
+  };
+#endif
 
 #if SANITIZER_ANDROID || SANITIZER_MAC
   struct __sanitizer_msghdr {

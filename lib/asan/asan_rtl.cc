@@ -474,11 +474,6 @@ void __asan_init() {
   // Setup internal allocator callback.
   SetLowLevelAllocateCallback(OnLowLevelAllocate);
 
-  if (flags()->atexit) {
-    Atexit(asan_atexit);
-  }
-
-  // interceptors
   InitializeAsanInterceptors();
 
   ReplaceSystemMalloc();
@@ -533,9 +528,9 @@ void __asan_init() {
     Die();
   }
 
+  AsanTSDInit(PlatformTSDDtor);
   InstallSignalHandlers();
 
-  AsanTSDInit(PlatformTSDDtor);
   // Allocator should be initialized before starting external symbolizer, as
   // fork() on Mac locks the allocator.
   InitializeAllocator();
@@ -551,6 +546,10 @@ void __asan_init() {
   asan_inited = 1;
   asan_init_is_running = false;
 
+  if (flags()->atexit)
+    Atexit(asan_atexit);
+
+  // interceptors
   InitTlsSize();
 
   // Create main thread.

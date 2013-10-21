@@ -41,6 +41,7 @@
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <sys/ioctl.h>
+#include <sys/statvfs.h>
 #include <sys/sysinfo.h>
 #include <sys/utsname.h>
 #include <sys/mman.h>
@@ -50,6 +51,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <wordexp.h>
+#include <mntent.h>
 
 #if defined(__i386__) || defined(__x86_64__)
 # include <emmintrin.h>
@@ -686,12 +688,34 @@ TEST(MemorySanitizer, fstatat) {
 }
 
 TEST(MemorySanitizer, statfs) {
-  struct statfs* st = new struct statfs;
-  int res = statfs("/", st);
+  struct statfs st;
+  int res = statfs("/", &st);
   assert(!res);
-  EXPECT_NOT_POISONED(st->f_type);
-  EXPECT_NOT_POISONED(st->f_bfree);
-  EXPECT_NOT_POISONED(st->f_namelen);
+  EXPECT_NOT_POISONED(st.f_type);
+  EXPECT_NOT_POISONED(st.f_bfree);
+  EXPECT_NOT_POISONED(st.f_namelen);
+}
+
+TEST(MemorySanitizer, statvfs) {
+  struct statvfs st;
+  int res = statvfs("/", &st);
+  assert(!res);
+  EXPECT_NOT_POISONED(st.f_bsize);
+  EXPECT_NOT_POISONED(st.f_blocks);
+  EXPECT_NOT_POISONED(st.f_bfree);
+  EXPECT_NOT_POISONED(st.f_namemax);
+}
+
+TEST(MemorySanitizer, fstatvfs) {
+  struct statvfs st;
+  int fd = open("/", O_RDONLY | O_DIRECTORY);
+  int res = fstatvfs(fd, &st);
+  assert(!res);
+  EXPECT_NOT_POISONED(st.f_bsize);
+  EXPECT_NOT_POISONED(st.f_blocks);
+  EXPECT_NOT_POISONED(st.f_bfree);
+  EXPECT_NOT_POISONED(st.f_namemax);
+  close(fd);
 }
 
 TEST(MemorySanitizer, pipe) {
@@ -815,6 +839,7 @@ TEST(MemorySanitizer, accept) {
   ASSERT_LT(0, listen_socket);
 
   struct sockaddr_in sai;
+  memset(&sai, 0, sizeof(sai));
   sai.sin_family = AF_INET;
   sai.sin_port = 0;
   sai.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -868,6 +893,7 @@ TEST(MemorySanitizer, getaddrinfo) {
 
 TEST(MemorySanitizer, getnameinfo) {
   struct sockaddr_in sai;
+  memset(&sai, 0, sizeof(sai));
   sai.sin_family = AF_INET;
   sai.sin_port = 80;
   sai.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -920,6 +946,77 @@ TEST(MemorySanitizer, gethostbyname) {
 }
 
 #endif // MSAN_TEST_DISABLE_GETHOSTBYNAME
+
+TEST(MemorySanitizer, recvmsg) {
+  int server_socket = socket(AF_INET, SOCK_DGRAM, 0);
+  ASSERT_LT(0, server_socket);
+
+  struct sockaddr_in sai;
+  memset(&sai, 0, sizeof(sai));
+  sai.sin_family = AF_INET;
+  sai.sin_port = 0;
+  sai.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  int res = bind(server_socket, (struct sockaddr *)&sai, sizeof(sai));
+  ASSERT_EQ(0, res);
+
+  socklen_t sz = sizeof(sai);
+  res = getsockname(server_socket, (struct sockaddr *)&sai, &sz);
+  ASSERT_EQ(0, res);
+  ASSERT_EQ(sizeof(sai), sz);
+
+
+  int client_socket = socket(AF_INET, SOCK_DGRAM, 0);
+  ASSERT_LT(0, client_socket);
+
+  struct sockaddr_in client_sai;
+  memset(&client_sai, 0, sizeof(client_sai));
+  client_sai.sin_family = AF_INET;
+  client_sai.sin_port = 0;
+  client_sai.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  res = bind(client_socket, (struct sockaddr *)&client_sai, sizeof(client_sai));
+  ASSERT_EQ(0, res);
+
+  sz = sizeof(client_sai);
+  res = getsockname(client_socket, (struct sockaddr *)&client_sai, &sz);
+  ASSERT_EQ(0, res);
+  ASSERT_EQ(sizeof(client_sai), sz);
+
+  
+  const char *s = "message text";
+  struct iovec iov;
+  iov.iov_base = (void *)s;
+  iov.iov_len = strlen(s) + 1;
+  struct msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_name = &sai;
+  msg.msg_namelen = sizeof(sai);
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  res = sendmsg(client_socket, &msg, 0);
+  ASSERT_LT(0, res);
+
+
+  char buf[1000];
+  struct iovec recv_iov;
+  recv_iov.iov_base = (void *)&buf;
+  recv_iov.iov_len = sizeof(buf);
+  struct sockaddr_in recv_sai;
+  struct msghdr recv_msg;
+  memset(&recv_msg, 0, sizeof(recv_msg));
+  recv_msg.msg_name = &recv_sai;
+  recv_msg.msg_namelen = sizeof(recv_sai);
+  recv_msg.msg_iov = &recv_iov;
+  recv_msg.msg_iovlen = 1;
+  res = recvmsg(server_socket, &recv_msg, 0);
+  ASSERT_LT(0, res);
+
+  ASSERT_EQ(sizeof(recv_sai), recv_msg.msg_namelen);
+  EXPECT_NOT_POISONED(*(struct sockaddr_in *)recv_msg.msg_name);
+  EXPECT_STREQ(s, buf);
+
+  close(server_socket);
+  close(client_socket);
+}
 
 TEST(MemorySanitizer, gethostbyname2) {
   struct hostent *he = gethostbyname2("localhost", AF_INET);
@@ -1541,6 +1638,34 @@ TEST(MemorySanitizer, localtime_r) {
   EXPECT_NOT_POISONED(time.tm_year);
   EXPECT_NOT_POISONED(time.tm_isdst);
   EXPECT_NE(0, strlen(time.tm_zone));
+}
+
+TEST(MemorySanitizer, getmntent) {
+  FILE *fp = setmntent("/etc/fstab", "r");
+  struct mntent *mnt = getmntent(fp);
+  ASSERT_NE((void *)0, mnt);
+  ASSERT_NE(0, strlen(mnt->mnt_fsname));
+  ASSERT_NE(0, strlen(mnt->mnt_dir));
+  ASSERT_NE(0, strlen(mnt->mnt_type));
+  ASSERT_NE(0, strlen(mnt->mnt_opts));
+  EXPECT_NOT_POISONED(mnt->mnt_freq);
+  EXPECT_NOT_POISONED(mnt->mnt_passno);
+  fclose(fp);
+}
+
+TEST(MemorySanitizer, getmntent_r) {
+  FILE *fp = setmntent("/etc/fstab", "r");
+  struct mntent mntbuf;
+  char buf[1000];
+  struct mntent *mnt = getmntent_r(fp, &mntbuf, buf, sizeof(buf));
+  ASSERT_NE((void *)0, mnt);
+  ASSERT_NE(0, strlen(mnt->mnt_fsname));
+  ASSERT_NE(0, strlen(mnt->mnt_dir));
+  ASSERT_NE(0, strlen(mnt->mnt_type));
+  ASSERT_NE(0, strlen(mnt->mnt_opts));
+  EXPECT_NOT_POISONED(mnt->mnt_freq);
+  EXPECT_NOT_POISONED(mnt->mnt_passno);
+  fclose(fp);
 }
 
 TEST(MemorySanitizer, mmap) {
@@ -2313,12 +2438,16 @@ namespace {
 struct SignalCondArg {
   pthread_cond_t* cond;
   pthread_mutex_t* mu;
+  bool broadcast;
 };
 
 void *SignalCond(void *param) {
   SignalCondArg *arg = reinterpret_cast<SignalCondArg *>(param);
   pthread_mutex_lock(arg->mu);
-  pthread_cond_signal(arg->cond);
+  if (arg->broadcast)
+    pthread_cond_broadcast(arg->cond);
+  else
+    pthread_cond_signal(arg->cond);
   pthread_mutex_unlock(arg->mu);
   return 0;
 }
@@ -2327,16 +2456,25 @@ void *SignalCond(void *param) {
 TEST(MemorySanitizer, pthread_cond_wait) {
   pthread_cond_t cond;
   pthread_mutex_t mu;
-  SignalCondArg args = {&cond, &mu};
+  SignalCondArg args = {&cond, &mu, false};
   pthread_cond_init(&cond, 0);
   pthread_mutex_init(&mu, 0);
-
   pthread_mutex_lock(&mu);
+
+  // signal
   pthread_t thr;
   pthread_create(&thr, 0, SignalCond, &args);
   int res = pthread_cond_wait(&cond, &mu);
   assert(!res);
   pthread_join(thr, 0);
+
+  // broadcast
+  args.broadcast = true;
+  pthread_create(&thr, 0, SignalCond, &args);
+  res = pthread_cond_wait(&cond, &mu);
+  assert(!res);
+  pthread_join(thr, 0);
+
   pthread_mutex_unlock(&mu);
   pthread_mutex_destroy(&mu);
   pthread_cond_destroy(&cond);

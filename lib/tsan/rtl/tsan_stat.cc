@@ -374,6 +374,16 @@ void StatOutput(u64 *stat) {
   name[StatInt_backtrace_symbols]        = "  backtrace_symbols               ";
   name[StatInt_dlopen]                   = "  dlopen                          ";
   name[StatInt_dlclose]                  = "  dlclose                         ";
+  name[StatInt_getmntent]                = "  getmntent                       ";
+  name[StatInt_getmntent_r]              = "  getmntent_r                     ";
+  name[StatInt_statfs]                   = "  statfs                          ";
+  name[StatInt_statfs64]                 = "  statfs64                        ";
+  name[StatInt_fstatfs]                  = "  fstatfs                         ";
+  name[StatInt_fstatfs64]                = "  fstatfs64                       ";
+  name[StatInt_statvfs]                  = "  statvfs                         ";
+  name[StatInt_statvfs64]                = "  statvfs64                       ";
+  name[StatInt_fstatvfs]                 = "  fstatvfs                        ";
+  name[StatInt_fstatvfs64]               = "  fstatvfs64                      ";
 
   name[StatAnnotation]                   = "Dynamic annotations               ";
   name[StatAnnotateHappensBefore]        = "  HappensBefore                   ";
