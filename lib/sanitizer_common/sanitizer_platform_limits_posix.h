@@ -18,7 +18,11 @@
 #include "sanitizer_internal_defs.h"
 #include "sanitizer_platform.h"
 
+// maybe this conditional should be darwin8 or 9 (pre-10)
 #define is_powerpc	(defined(__ppc__) || defined(__powerpc__) || defined(__POWERPC__))
+
+// just doesn't exist on darwin8 -- should be auto-detected
+#define	HAVE_STRUCT_STATFS64			0
 
 namespace __sanitizer {
   extern unsigned struct_utsname_sz;
@@ -44,7 +48,9 @@ namespace __sanitizer {
 
 #if !SANITIZER_ANDROID
   extern unsigned ucontext_t_sz;
+#if HAVE_STRUCT_STATFS64
   extern unsigned struct_statfs64_sz;
+#endif
 #endif // !SANITIZER_ANDROID
 
 #if SANITIZER_LINUX

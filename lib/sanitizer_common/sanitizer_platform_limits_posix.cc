@@ -143,7 +143,9 @@ namespace __sanitizer {
 
 #if !SANITIZER_ANDROID
   unsigned ucontext_t_sz = sizeof(ucontext_t);
+#if HAVE_STRUCT_STATFS64
   unsigned struct_statfs64_sz = sizeof(struct statfs64);
+#endif
 #endif // !SANITIZER_ANDROID
 
 #if SANITIZER_LINUX
