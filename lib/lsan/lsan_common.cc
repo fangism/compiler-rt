@@ -93,8 +93,12 @@ void InitializeSuppressions() {
 
 void InitCommonLsan() {
   InitializeFlags();
-  InitializeSuppressions();
-  InitializePlatformSpecificModules();
+  if (common_flags()->detect_leaks) {
+    // Initialization which can fail or print warnings should only be done if
+    // LSan is actually enabled.
+    InitializeSuppressions();
+    InitializePlatformSpecificModules();
+  }
 }
 
 class Decorator: private __sanitizer::AnsiColorDecorator {
@@ -409,8 +413,8 @@ static Suppression *GetSuppressionForAddr(uptr addr) {
   static const uptr kMaxAddrFrames = 16;
   InternalScopedBuffer<AddressInfo> addr_frames(kMaxAddrFrames);
   for (uptr i = 0; i < kMaxAddrFrames; i++) new (&addr_frames[i]) AddressInfo();
-  uptr addr_frames_num =
-      getSymbolizer()->SymbolizeCode(addr, addr_frames.data(), kMaxAddrFrames);
+  uptr addr_frames_num = Symbolizer::Get()->SymbolizeCode(
+      addr, addr_frames.data(), kMaxAddrFrames);
   for (uptr i = 0; i < addr_frames_num; i++) {
     Suppression* s;
     if (suppression_ctx->Match(addr_frames[i].function, SuppressionLeak, &s) ||
@@ -509,7 +513,8 @@ void LeakReport::PrintSummary() {
   const int kMaxSummaryLength = 128;
   InternalScopedBuffer<char> summary(kMaxSummaryLength);
   internal_snprintf(summary.data(), kMaxSummaryLength,
-                    "LeakSanitizer: %zu byte(s) leaked in %zu allocation(s).",
+                    "SUMMARY: LeakSanitizer: %zu byte(s) leaked in %zu "
+                    "allocation(s).",
                     bytes, allocations);
   __sanitizer_report_error_summary(summary.data());
 }
@@ -537,6 +542,8 @@ extern "C" {
 SANITIZER_INTERFACE_ATTRIBUTE
 void __lsan_ignore_object(const void *p) {
 #if CAN_SANITIZE_LEAKS
+  if (!common_flags()->detect_leaks)
+    return;
   // Cannot use PointsIntoChunk or LsanMetadata here, since the allocator is not
   // locked.
   BlockingMutexLock l(&global_mutex);
@@ -561,7 +568,7 @@ void __lsan_disable() {
 SANITIZER_INTERFACE_ATTRIBUTE
 void __lsan_enable() {
 #if CAN_SANITIZE_LEAKS
-  if (!__lsan::disable_counter) {
+  if (!__lsan::disable_counter && common_flags()->detect_leaks) {
     Report("Unmatched call to __lsan_enable().\n");
     Die();
   }

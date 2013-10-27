@@ -52,6 +52,9 @@
 #include <netdb.h>
 #include <wordexp.h>
 #include <mntent.h>
+#include <netinet/ether.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 
 #if defined(__i386__) || defined(__x86_64__)
 # include <emmintrin.h>
@@ -1120,6 +1123,45 @@ TEST(MemorySanitizer, get_current_dir_name) {
   free(res);
 }
 
+TEST(MemorySanitizer, shmctl) {
+  int id = shmget(IPC_PRIVATE, 4096, 0644 | IPC_CREAT);
+  ASSERT_GT(id, -1);
+
+  struct shmid_ds ds;
+  int res = shmctl(id, IPC_STAT, &ds);
+  ASSERT_GT(res, -1);
+  EXPECT_NOT_POISONED(ds);
+
+  struct shminfo si;
+  res = shmctl(id, IPC_INFO, (struct shmid_ds *)&si);
+  ASSERT_GT(res, -1);
+  EXPECT_NOT_POISONED(si);
+
+  struct shm_info s_i;
+  res = shmctl(id, SHM_INFO, (struct shmid_ds *)&s_i);
+  ASSERT_GT(res, -1);
+  EXPECT_NOT_POISONED(s_i);
+
+  res = shmctl(id, IPC_RMID, 0);
+  ASSERT_GT(res, -1);
+}
+
+TEST(MemorySanitizer, random_r) {
+  int32_t x;
+  char z[64];
+  memset(z, 0, sizeof(z));
+
+  struct random_data buf;
+  memset(&buf, 0, sizeof(buf));
+
+  int res = initstate_r(0, z, sizeof(z), &buf);
+  ASSERT_EQ(0, res);
+
+  res = random_r(&buf, &x);
+  ASSERT_EQ(0, res);
+  EXPECT_NOT_POISONED(x);
+}
+
 TEST(MemorySanitizer, confstr) {
   char buf[3];
   size_t res = confstr(_CS_PATH, buf, sizeof(buf));
@@ -1207,6 +1249,35 @@ TEST(MemorySanitizer, memcpy) {
   memcpy(y, x, 2);
   EXPECT_NOT_POISONED(y[0]);
   EXPECT_POISONED(y[1]);
+}
+
+void TestUnalignedMemcpy(int left, int right, bool src_is_aligned) {
+  const int sz = 20;
+  char *dst = (char *)malloc(sz);
+  U4 origin = __msan_get_origin(dst);
+
+  char *src = (char *)malloc(sz);
+  memset(src, 0, sz);
+
+  memcpy(dst + left, src_is_aligned ? src + left : src, sz - left - right);
+  for (int i = 0; i < left; ++i)
+    EXPECT_POISONED_O(dst[i], origin);
+  for (int i = 0; i < right; ++i)
+    EXPECT_POISONED_O(dst[sz - i - 1], origin);
+  EXPECT_NOT_POISONED(dst[left]);
+  EXPECT_NOT_POISONED(dst[sz - right - 1]);
+
+  free(dst);
+  free(src);
+}
+
+TEST(MemorySanitizer, memcpy_unaligned) {
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      TestUnalignedMemcpy(i, j, true);
+      TestUnalignedMemcpy(i, j, false);
+    }
+  }
 }
 
 TEST(MemorySanitizer, memmove) {
@@ -1666,6 +1737,25 @@ TEST(MemorySanitizer, getmntent_r) {
   EXPECT_NOT_POISONED(mnt->mnt_freq);
   EXPECT_NOT_POISONED(mnt->mnt_passno);
   fclose(fp);
+}
+
+TEST(MemorySanitizer, ether) {
+  const char *asc = "11:22:33:44:55:66";
+  struct ether_addr *paddr = ether_aton(asc);
+  EXPECT_NOT_POISONED(*paddr);
+
+  struct ether_addr addr;
+  paddr = ether_aton_r(asc, &addr);
+  ASSERT_EQ(paddr, &addr);
+  EXPECT_NOT_POISONED(addr);
+
+  char *s = ether_ntoa(&addr);
+  ASSERT_NE(0, strlen(s));
+
+  char buf[100];
+  s = ether_ntoa_r(&addr, buf);
+  ASSERT_EQ(s, buf);
+  ASSERT_NE(0, strlen(buf));
 }
 
 TEST(MemorySanitizer, mmap) {
@@ -2416,6 +2506,71 @@ TEST(MemorySanitizer, PreAllocatedStackThread) {
   ASSERT_EQ(0, res);
 }
 
+TEST(MemorySanitizer, pthread_attr_get) {
+  pthread_attr_t attr;
+  int res;
+  res = pthread_attr_init(&attr);
+  ASSERT_EQ(0, res);
+  {
+    int v;
+    res = pthread_attr_getdetachstate(&attr, &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  {
+    size_t v;
+    res = pthread_attr_getguardsize(&attr, &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  {
+    struct sched_param v;
+    res = pthread_attr_getschedparam(&attr, &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  {
+    int v;
+    res = pthread_attr_getschedpolicy(&attr, &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  {
+    int v;
+    res = pthread_attr_getinheritsched(&attr, &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  {
+    int v;
+    res = pthread_attr_getscope(&attr, &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  {
+    size_t v;
+    res = pthread_attr_getstacksize(&attr, &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  {
+    void *v;
+    size_t w;
+    res = pthread_attr_getstack(&attr, &v, &w);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+    EXPECT_NOT_POISONED(w);
+  }
+  {
+    cpu_set_t v;
+    res = pthread_attr_getaffinity_np(&attr, sizeof(v), &v);
+    ASSERT_EQ(0, res);
+    EXPECT_NOT_POISONED(v);
+  }
+  res = pthread_attr_destroy(&attr);
+  ASSERT_EQ(0, res);
+}
+
 TEST(MemorySanitizer, pthread_getschedparam) {
   int policy;
   struct sched_param param;
@@ -2478,6 +2633,19 @@ TEST(MemorySanitizer, pthread_cond_wait) {
   pthread_mutex_unlock(&mu);
   pthread_mutex_destroy(&mu);
   pthread_cond_destroy(&cond);
+}
+
+TEST(MemorySanitizer, tmpnam) {
+  char s[L_tmpnam];
+  char *res = tmpnam(s);
+  ASSERT_EQ(s, res);
+  EXPECT_NOT_POISONED(strlen(res));
+}
+
+TEST(MemorySanitizer, tempnam) {
+  char *res = tempnam(NULL, "zzz");
+  EXPECT_NOT_POISONED(strlen(res));
+  free(res);
 }
 
 TEST(MemorySanitizer, posix_memalign) {

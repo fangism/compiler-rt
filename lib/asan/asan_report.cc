@@ -181,8 +181,8 @@ static bool IsASCII(unsigned char c) {
 static const char *MaybeDemangleGlobalName(const char *name) {
   // We can spoil names of globals with C linkage, so use an heuristic
   // approach to check if the name should be demangled.
-  return (name[0] == '_' && name[1] == 'Z' && &getSymbolizer)
-             ? getSymbolizer()->Demangle(name)
+  return (name[0] == '_' && name[1] == 'Z')
+             ? Symbolizer::Get()->Demangle(name)
              : name;
 }
 
@@ -550,16 +550,16 @@ class ScopedInErrorReport {
 };
 
 static void ReportSummary(const char *error_type, StackTrace *stack) {
-  if (!stack->size) return;
-  if (&getSymbolizer && getSymbolizer()->IsAvailable()) {
-    AddressInfo ai;
+  AddressInfo ai;
+  // FIXME: The symbolizer interface should be changed in order to support
+  // Windows where we don't have a symbolizer.
+  if (!SANITIZER_WINDOWS && Symbolizer::Get()->IsAvailable()) {
     // Currently, we include the first stack frame into the report summary.
     // Maybe sometimes we need to choose another frame (e.g. skip memcpy/etc).
     uptr pc = StackTrace::GetPreviousInstructionPc(stack->trace[0]);
-    getSymbolizer()->SymbolizeCode(pc, &ai, 1);
-    ReportErrorSummary(error_type, ai.file, ai.line, ai.function);
+    Symbolizer::Get()->SymbolizeCode(pc, &ai, 1);
   }
-  // FIXME: do we need to print anything at all if there is no symbolizer?
+  ReportErrorSummary(error_type, ai.file, ai.line, ai.function);
 }
 
 void ReportSIGSEGV(uptr pc, uptr sp, uptr bp, uptr addr) {

@@ -37,6 +37,8 @@ using __sanitizer::atomic_load;
 using __sanitizer::atomic_store;
 using __sanitizer::atomic_uintptr_t;
 
+static unsigned g_thread_finalize_key;
+
 // True if this is a nested interceptor.
 static THREADLOCAL int in_interceptor_scope;
 
@@ -1038,8 +1040,39 @@ INTERCEPTOR(int, signal, int signo, uptr cb) {
 
 extern "C" int pthread_attr_init(void *attr);
 extern "C" int pthread_attr_destroy(void *attr);
-extern "C" int pthread_attr_setstacksize(void *attr, uptr stacksize);
-extern "C" int pthread_attr_getstack(void *attr, uptr *stack, uptr *stacksize);
+extern "C" int pthread_setspecific(unsigned key, const void *v);
+extern "C" int pthread_yield();
+
+static void thread_finalize(void *v) {
+  uptr iter = (uptr)v;
+  if (iter > 1) {
+    if (pthread_setspecific(g_thread_finalize_key, (void*)(iter - 1))) {
+      Printf("MemorySanitizer: failed to set thread key\n");
+      Die();
+    }
+    return;
+  }
+  MsanAllocatorThreadFinish();
+}
+
+struct ThreadParam {
+  void* (*callback)(void *arg);
+  void *param;
+  atomic_uintptr_t done;
+};
+
+static void *MsanThreadStartFunc(void *arg) {
+  ThreadParam *p = (ThreadParam *)arg;
+  void* (*callback)(void *arg) = p->callback;
+  void *param = p->param;
+  if (pthread_setspecific(g_thread_finalize_key,
+          (void *)kPthreadDestructorIterations)) {
+    Printf("MemorySanitizer: failed to set thread key\n");
+    Die();
+  }
+  atomic_store(&p->done, 1, memory_order_release);
+  return callback(param);
+}
 
 INTERCEPTOR(int, pthread_create, void *th, void *attr, void *(*callback)(void*),
             void * param) {
@@ -1052,7 +1085,17 @@ INTERCEPTOR(int, pthread_create, void *th, void *attr, void *(*callback)(void*),
 
   AdjustStackSizeLinux(attr);
 
-  int res = REAL(pthread_create)(th, attr, callback, param);
+  ThreadParam p;
+  p.callback = callback;
+  p.param = param;
+  atomic_store(&p.done, 0, memory_order_relaxed);
+
+  int res = REAL(pthread_create)(th, attr, MsanThreadStartFunc, (void *)&p);
+  if (res == 0) {
+    while (atomic_load(&p.done, memory_order_acquire) != 1)
+      pthread_yield();
+  }
+
   if (attr == &myattr)
     pthread_attr_destroy(&myattr);
   if (!res) {
@@ -1127,6 +1170,8 @@ int OnExit() {
 
 }  // namespace __msan
 
+extern "C" int *__errno_location(void);
+
 // A version of CHECK_UNPOISED using a saved scope value. Used in common
 // interceptors.
 #define CHECK_UNPOISONED_CTX(ctx, x, n)                         \
@@ -1143,12 +1188,13 @@ int OnExit() {
   CHECK_UNPOISONED_CTX(ctx, ptr, size)
 #define COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, ptr, size) \
   __msan_unpoison(ptr, size)
-#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)              \
-  if (msan_init_is_running) return REAL(func)(__VA_ARGS__);   \
-  MSanInterceptorContext msan_ctx = {IsInInterceptorScope()}; \
-  ctx = (void *)&msan_ctx;                                    \
-  (void)ctx;                                                  \
-  InterceptorScope interceptor_scope;                         \
+#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)                  \
+  if (msan_init_is_running) return REAL(func)(__VA_ARGS__);       \
+  MSanInterceptorContext msan_ctx = {IsInInterceptorScope()};     \
+  ctx = (void *)&msan_ctx;                                        \
+  (void)ctx;                                                      \
+  InterceptorScope interceptor_scope;                             \
+  __msan_unpoison(__errno_location(), sizeof(int)); /* NOLINT */  \
   ENSURE_MSAN_INITED();
 #define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) \
   do {                                         \
@@ -1233,15 +1279,41 @@ void __msan_clear_and_unpoison(void *a, uptr size) {
   fast_memset((void*)MEM_TO_SHADOW((uptr)a), 0, size);
 }
 
+u32 get_origin_if_poisoned(uptr a, uptr size) {
+  unsigned char *s = (unsigned char *)MEM_TO_SHADOW(a);
+  for (uptr i = 0; i < size; ++i)
+    if (s[i])
+      return *(uptr *)SHADOW_TO_ORIGIN((s + i) & ~3UL);
+  return 0;
+}
+
 void __msan_copy_origin(void *dst, const void *src, uptr size) {
   if (!__msan_get_track_origins()) return;
   if (!MEM_IS_APP(dst) || !MEM_IS_APP(src)) return;
-  uptr d = MEM_TO_ORIGIN(dst);
-  uptr s = MEM_TO_ORIGIN(src);
-  uptr beg = d & ~3UL;  // align down.
-  uptr end = (d + size + 3) & ~3UL;  // align up.
-  s = s & ~3UL;  // align down.
-  fast_memcpy((void*)beg, (void*)s, end - beg);
+  uptr d = (uptr)dst;
+  uptr beg = d & ~3UL;
+  // Copy left unaligned origin if that memory is poisoned.
+  if (beg < d) {
+    u32 o = get_origin_if_poisoned(beg, d - beg);
+    if (o)
+      *(uptr *)MEM_TO_ORIGIN(beg) = o;
+    beg += 4;
+  }
+
+  uptr end = (d + size + 3) & ~3UL;
+  // Copy right unaligned origin if that memory is poisoned.
+  if (end > d + size) {
+    u32 o = get_origin_if_poisoned(d + size, end - d - size);
+    if (o)
+      *(uptr *)MEM_TO_ORIGIN(end - 4) = o;
+    end -= 4;
+  }
+
+  if (beg < end) {
+    // Align src up.
+    uptr s = ((uptr)src + 3) & ~3UL;
+    fast_memcpy((void*)MEM_TO_ORIGIN(beg), (void*)MEM_TO_ORIGIN(s), end - beg);
+  }
 }
 
 void __msan_copy_poison(void *dst, const void *src, uptr size) {
@@ -1387,6 +1459,12 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(pthread_join);
   INTERCEPT_FUNCTION(tzset);
   INTERCEPT_FUNCTION(__cxa_atexit);
+
+  if (REAL(pthread_key_create)(&g_thread_finalize_key, &thread_finalize)) {
+    Printf("MemorySanitizer: failed to create thread key\n");
+    Die();
+  }
+
   inited = 1;
 }
 }  // namespace __msan

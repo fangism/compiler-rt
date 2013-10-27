@@ -384,6 +384,29 @@ void StatOutput(u64 *stat) {
   name[StatInt_statvfs64]                = "  statvfs64                       ";
   name[StatInt_fstatvfs]                 = "  fstatvfs                        ";
   name[StatInt_fstatvfs64]               = "  fstatvfs64                      ";
+  name[StatInt_initgroups]               = "  initgroups                      ";
+  name[StatInt_ether_ntoa]               = "  ether_ntoa                      ";
+  name[StatInt_ether_aton]               = "  ether_aton                      ";
+  name[StatInt_ether_ntoa_r]             = "  ether_ntoa_r                    ";
+  name[StatInt_ether_aton_r]             = "  ether_aton_r                    ";
+  name[StatInt_ether_ntohost]            = "  ether_ntohost                   ";
+  name[StatInt_ether_hostton]            = "  ether_hostton                   ";
+  name[StatInt_ether_line]               = "  ether_line                      ";
+  name[StatInt_shmctl]                   = "  shmctl                          ";
+  name[StatInt_random_r]                 = "  random_r                        ";
+  name[StatInt_tmpnam]                   = "  tmpnam                          ";
+  name[StatInt_tmpnam_r]                 = "  tmpnam_r                        ";
+  name[StatInt_tempnam]                  = "  tempnam                         ";
+
+  name[StatInt_pthread_attr_getdetachstate]  = "  pthread_addr_getdetachstate     ";  // NOLINT
+  name[StatInt_pthread_attr_getguardsize]    = "  pthread_addr_getguardsize       ";  // NOLINT
+  name[StatInt_pthread_attr_getschedparam]   = "  pthread_addr_getschedparam      ";  // NOLINT
+  name[StatInt_pthread_attr_getschedpolicy]  = "  pthread_addr_getschedpolicy     ";  // NOLINT
+  name[StatInt_pthread_attr_getinheritsched] = "  pthread_addr_getinheritsched    ";  // NOLINT
+  name[StatInt_pthread_attr_getscope]        = "  pthread_addr_getscope           ";  // NOLINT
+  name[StatInt_pthread_attr_getstacksize]    = "  pthread_addr_getstacksize       ";  // NOLINT
+  name[StatInt_pthread_attr_getstack]        = "  pthread_addr_getstack           ";  // NOLINT
+  name[StatInt_pthread_attr_getaffinity_np]  = "  pthread_addr_getaffinity_np     ";  // NOLINT
 
   name[StatAnnotation]                   = "Dynamic annotations               ";
   name[StatAnnotateHappensBefore]        = "  HappensBefore                   ";

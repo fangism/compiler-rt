@@ -127,6 +127,11 @@ function(filter_available_targets out_var)
   set(${out_var} ${archs} PARENT_SCOPE)
 endfunction()
 
+option(COMPILER_RT_DEBUG "Build runtimes with full debug info" OFF)
+
+# COMPILER_RT_DEBUG_PYBOOL is used by lit.common.configured.in.
+pythonize_bool(COMPILER_RT_DEBUG)
+
 # Provide some common commmandline flags for Sanitizer runtimes.
 if (NOT MSVC)
   set(SANITIZER_COMMON_CFLAGS
@@ -134,13 +139,15 @@ if (NOT MSVC)
     -fno-builtin
     -fno-exceptions
     -fomit-frame-pointer
-    -O3
     -fvisibility=hidden
     )
 # master has:
 #  -funwind-tables
 #  -fno-stack-protector
 #  -Wno-gnu  # Variadic macros with 0 arguments for ...
+  if (NOT COMPILER_RT_DEBUG)
+    list(APPEND SANITIZER_COMMON_CFLAGS -O3)
+  endif()
 else()
   set(SANITIZER_COMMON_CFLAGS
     /MT
@@ -153,7 +160,7 @@ endif()
 # Build sanitizer runtimes with debug info. (MSVC gets /Zi above)
 if (NOT MSVC)
   check_cxx_compiler_flag(-gline-tables-only SUPPORTS_GLINE_TABLES_ONLY_FLAG)
-  if(SUPPORTS_GLINE_TABLES_ONLY_FLAG)
+  if(SUPPORTS_GLINE_TABLES_ONLY_FLAG AND NOT COMPILER_RT_DEBUG)
     list(APPEND SANITIZER_COMMON_CFLAGS -gline-tables-only)
   else()
 #   only enable -g for stage 1, stage 2 (-no-integrated-as) unable to handle -g

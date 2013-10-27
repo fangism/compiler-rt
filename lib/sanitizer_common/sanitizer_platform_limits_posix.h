@@ -107,6 +107,10 @@ namespace __sanitizer {
   typedef unsigned __sanitizer_pthread_key_t;
 #endif
 
+  struct __sanitizer_ether_addr {
+    u8 octet[6];
+  };
+
   struct __sanitizer_tm {
     int tm_sec;
     int tm_min;
@@ -364,6 +368,15 @@ namespace __sanitizer {
   extern int ptrace_setsiginfo;
   extern int ptrace_getregset;
   extern int ptrace_setregset;
+#endif
+
+#if SANITIZER_LINUX && !SANITIZER_ANDROID
+  extern unsigned struct_shminfo_sz;
+  extern unsigned struct_shm_info_sz;
+  extern int shmctl_ipc_stat;
+  extern int shmctl_ipc_info;
+  extern int shmctl_shm_info;
+  extern int shmctl_shm_stat;
 #endif
 
   // ioctl arguments
