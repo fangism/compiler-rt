@@ -182,6 +182,7 @@ void StatOutput(u64 *stat) {
   name[StatInt_pthread_barrier_wait]     = "  pthread_barrier_wait            ";
   name[StatInt_pthread_once]             = "  pthread_once                    ";
   name[StatInt_pthread_getschedparam]    = "  pthread_getschedparam           ";
+  name[StatInt_pthread_setname_np]       = "  pthread_setname_np              ";
   name[StatInt_sem_init]                 = "  sem_init                        ";
   name[StatInt_sem_destroy]              = "  sem_destroy                     ";
   name[StatInt_sem_wait]                 = "  sem_wait                        ";
@@ -291,6 +292,7 @@ void StatOutput(u64 *stat) {
   name[StatInt_ctime_r]                  = "  ctime_r                         ";
   name[StatInt_asctime]                  = "  asctime                         ";
   name[StatInt_asctime_r]                = "  asctime_r                       ";
+  name[StatInt_strptime]                 = "  strptime                        ";
   name[StatInt_frexp]                    = "  frexp                           ";
   name[StatInt_frexpf]                   = "  frexpf                          ";
   name[StatInt_frexpl]                   = "  frexpl                          ";
@@ -397,6 +399,22 @@ void StatOutput(u64 *stat) {
   name[StatInt_tmpnam]                   = "  tmpnam                          ";
   name[StatInt_tmpnam_r]                 = "  tmpnam_r                        ";
   name[StatInt_tempnam]                  = "  tempnam                         ";
+  name[StatInt_sincos]                   = "  sincos                          ";
+  name[StatInt_sincosf]                  = "  sincosf                         ";
+  name[StatInt_sincosl]                  = "  sincosl                         ";
+  name[StatInt_remquo]                   = "  remquo                          ";
+  name[StatInt_remquof]                  = "  remquof                         ";
+  name[StatInt_remquol]                  = "  remquol                         ";
+  name[StatInt_lgamma]                   = "  lgamma                          ";
+  name[StatInt_lgammaf]                  = "  lgammaf                         ";
+  name[StatInt_lgammal]                  = "  lgammal                         ";
+  name[StatInt_lgamma_r]                 = "  lgamma_r                        ";
+  name[StatInt_lgammaf_r]                = "  lgammaf_r                       ";
+  name[StatInt_lgammal_r]                = "  lgammal_r                       ";
+  name[StatInt_drand48_r]                = "  drand48_r                       ";
+  name[StatInt_lrand48_r]                = "  lrand48_r                       ";
+  name[StatInt_getline]                  = "  getline                         ";
+  name[StatInt_getdelim]                 = "  getdelim                        ";
 
   name[StatInt_pthread_attr_getdetachstate]  = "  pthread_addr_getdetachstate     ";  // NOLINT
   name[StatInt_pthread_attr_getguardsize]    = "  pthread_addr_getguardsize       ";  // NOLINT

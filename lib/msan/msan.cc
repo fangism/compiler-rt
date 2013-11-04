@@ -122,7 +122,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->poison_heap_with_zeroes, "poison_heap_with_zeroes");
   ParseFlag(str, &f->poison_stack_with_zeroes, "poison_stack_with_zeroes");
   ParseFlag(str, &f->poison_in_malloc, "poison_in_malloc");
-  ParseFlag(str, &f->poison_in_malloc, "poison_in_free");
+  ParseFlag(str, &f->poison_in_free, "poison_in_free");
   ParseFlag(str, &f->exit_code, "exit_code");
   if (f->exit_code < 0 || f->exit_code > 127) {
     Printf("Exit code not in [0, 128) range: %d\n", f->exit_code);
@@ -142,6 +142,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
 static void InitializeFlags(Flags *f, const char *options) {
   CommonFlags *cf = common_flags();
   cf->external_symbolizer_path = GetEnv("MSAN_SYMBOLIZER_PATH");
+  cf->symbolize = true;
   cf->strip_path_prefix = "";
   cf->fast_unwind_on_fatal = false;
   cf->fast_unwind_on_malloc = true;
@@ -336,6 +337,7 @@ void __msan_init() {
   if (external_symbolizer && external_symbolizer[0]) {
     CHECK(external_symbolizer_started);
   }
+  Symbolizer::Get()->AddHooks(EnterSymbolizer, ExitSymbolizer);
 
   GetThreadStackTopAndBottom(/* at_initialization */true,
                              &__msan_stack_bounds.stack_top,
@@ -370,6 +372,10 @@ void __msan_set_expect_umr(int expect_umr) {
 }
 
 void __msan_print_shadow(const void *x, uptr size) {
+  if (!MEM_IS_APP(x)) {
+    Printf("Not a valid application address: %p\n", x);
+    return;
+  }
   unsigned char *s = (unsigned char*)MEM_TO_SHADOW(x);
   u32 *o = (u32*)MEM_TO_ORIGIN(x);
   for (uptr i = 0; i < size; i++) {

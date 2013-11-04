@@ -27,7 +27,9 @@
 namespace __sanitizer {
   extern unsigned struct_utsname_sz;
   extern unsigned struct_stat_sz;
+#if !SANITIZER_IOS
   extern unsigned struct_stat64_sz;
+#endif
   extern unsigned struct_rusage_sz;
   extern unsigned struct_passwd_sz;
   extern unsigned struct_group_sz;
@@ -45,6 +47,7 @@ namespace __sanitizer {
   extern unsigned struct_sigevent_sz;
   extern unsigned struct_sched_param_sz;
   extern unsigned struct_statfs_sz;
+  extern unsigned struct_statfs64_sz;
 
 #if !SANITIZER_ANDROID
   extern unsigned ucontext_t_sz;
@@ -58,13 +61,11 @@ namespace __sanitizer {
   extern unsigned struct_kernel_stat_sz;
   extern unsigned struct_kernel_stat64_sz;
   extern unsigned struct_io_event_sz;
-  extern unsigned struct_iocb_sz;
   extern unsigned struct_utimbuf_sz;
   extern unsigned struct_new_utsname_sz;
   extern unsigned struct_old_utsname_sz;
   extern unsigned struct_oldold_utsname_sz;
   extern unsigned struct_msqid_ds_sz;
-  extern unsigned struct_shmid_ds_sz;
   extern unsigned struct_mq_attr_sz;
   extern unsigned struct_perf_event_attr_sz;
   extern unsigned struct_timex_sz;
@@ -78,6 +79,23 @@ namespace __sanitizer {
   extern unsigned __user_cap_data_struct_sz;
   const unsigned old_sigset_t_sz = sizeof(unsigned long);
   const unsigned struct_kexec_segment_sz = 4 * sizeof(unsigned long);
+
+  struct __sanitizer_iocb {
+    u64   aio_data;
+    u32   aio_key_or_aio_reserved1; // Simply crazy.
+    u32   aio_reserved1_or_aio_key; // Luckily, we don't need these.
+    u16   aio_lio_opcode;
+    s16   aio_reqprio;
+    u32   aio_fildes;
+    u64   aio_buf;
+    u64   aio_nbytes;
+    s64   aio_offset;
+    u64   aio_reserved2;
+    u64   aio_reserved3;
+  };
+
+  extern unsigned iocb_cmd_pread;
+  extern unsigned iocb_cmd_pwrite;
 
   struct __sanitizer___sysctl_args {
     int *name;
@@ -94,7 +112,43 @@ namespace __sanitizer {
   extern unsigned struct_rlimit64_sz;
   extern unsigned struct_statvfs_sz;
   extern unsigned struct_statvfs64_sz;
-#endif // SANITIZER_LINUX && !SANITIZER_ANDROID
+
+  struct __sanitizer_ipc_perm {
+    int __key;
+    int uid;
+    int gid;
+    int cuid;
+    int cgid;
+    unsigned short mode;
+    unsigned short __pad1;
+    unsigned short __seq;
+    unsigned short __pad2;
+    uptr __unused1;
+    uptr __unused2;
+  };
+
+  struct __sanitizer_shmid_ds {
+    __sanitizer_ipc_perm shm_perm;
+    uptr shm_segsz;
+    uptr shm_atime;
+  #ifndef _LP64
+    uptr __unused1;
+  #endif
+    uptr shm_dtime;
+  #ifndef _LP64
+    uptr __unused2;
+  #endif
+    uptr shm_ctime;
+  #ifndef _LP64
+    uptr __unused3;
+  #endif
+    int shm_cpid;
+    int shm_lpid;
+    uptr shm_nattch;
+    uptr __unused4;
+    uptr __unused5;
+  };
+  #endif  // SANITIZER_LINUX && !SANITIZER_ANDROID
 
   struct __sanitizer_iovec {
     void  *iov_base;
@@ -358,6 +412,9 @@ namespace __sanitizer {
   extern unsigned struct_user_fpregs_struct_sz;
   extern unsigned struct_user_fpxregs_struct_sz;
 
+  extern int ptrace_peektext;
+  extern int ptrace_peekdata;
+  extern int ptrace_peekuser;
   extern int ptrace_getregs;
   extern int ptrace_setregs;
   extern int ptrace_getfpregs;
@@ -885,6 +942,23 @@ namespace __sanitizer {
 #endif
 
 }  // namespace __sanitizer
+
+#define CHECK_TYPE_SIZE(TYPE) \
+  COMPILER_CHECK(sizeof(__sanitizer_##TYPE) == sizeof(TYPE))
+
+#define CHECK_SIZE_AND_OFFSET(CLASS, MEMBER)                       \
+  COMPILER_CHECK(sizeof(((__sanitizer_##CLASS *) NULL)->MEMBER) == \
+                 sizeof(((CLASS *) NULL)->MEMBER));                \
+  COMPILER_CHECK(offsetof(__sanitizer_##CLASS, MEMBER) ==          \
+                 offsetof(CLASS, MEMBER))
+
+// For sigaction, which is a function and struct at the same time,
+// and thus requires explicit "struct" in sizeof() expression.
+#define CHECK_STRUCT_SIZE_AND_OFFSET(CLASS, MEMBER)                       \
+  COMPILER_CHECK(sizeof(((struct __sanitizer_##CLASS *) NULL)->MEMBER) == \
+                 sizeof(((struct CLASS *) NULL)->MEMBER));                \
+  COMPILER_CHECK(offsetof(struct __sanitizer_##CLASS, MEMBER) ==          \
+                 offsetof(struct CLASS, MEMBER))
 
 #endif
 

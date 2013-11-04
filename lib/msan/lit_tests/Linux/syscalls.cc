@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <linux/aio_abi.h>
+#include <sys/ptrace.h>
 #include <sys/stat.h>
 
 #include <sanitizer/linux_syscall_hooks.h>
@@ -76,6 +78,23 @@ int main(int argc, char *argv[]) {
   __sanitizer_syscall_post_mq_timedreceive(kFortyTwo, 5, buf, sizeof(buf), &prio, 0);
   assert(__msan_test_shadow(buf, sizeof(buf)) == kFortyTwo);
   assert(__msan_test_shadow(&prio, sizeof(prio)) == -1);
+
+  __msan_poison(buf, sizeof(buf));
+  __sanitizer_syscall_post_ptrace(0, PTRACE_PEEKUSER, kFortyTwo, 0xABCD, buf);
+  assert(__msan_test_shadow(buf, sizeof(buf)) == sizeof(void *));
+
+  __msan_poison(buf, sizeof(buf));
+  struct iocb iocb[2];
+  struct iocb *iocbp[2] = { &iocb[0], &iocb[1] };
+  memset(iocb, 0, sizeof(iocb));
+  iocb[0].aio_lio_opcode = IOCB_CMD_PREAD;
+  iocb[0].aio_buf = (__u64)buf;
+  iocb[0].aio_nbytes = kFortyTwo;
+  iocb[1].aio_lio_opcode = IOCB_CMD_PREAD;
+  iocb[1].aio_buf = (__u64)(&buf[kFortyTwo]);
+  iocb[1].aio_nbytes = kFortyTwo;
+  __sanitizer_syscall_post_io_submit(1, 0, 2, &iocbp);
+  assert(__msan_test_shadow(buf, sizeof(buf)) == kFortyTwo);
   
   return 0;
 }

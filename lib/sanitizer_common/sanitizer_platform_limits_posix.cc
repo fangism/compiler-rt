@@ -122,9 +122,11 @@
 namespace __sanitizer {
   unsigned struct_utsname_sz = sizeof(struct utsname);
   unsigned struct_stat_sz = sizeof(struct stat);
+#if !SANITIZER_IOS
 #ifdef	HAVE_STRUCT_STAT64
   unsigned struct_stat64_sz = sizeof(struct stat64);
 #endif
+#endif // !SANITIZER_IOS
   unsigned struct_rusage_sz = sizeof(struct rusage);
   unsigned struct_tm_sz = sizeof(struct tm);
   unsigned struct_passwd_sz = sizeof(struct passwd);
@@ -172,7 +174,6 @@ namespace __sanitizer {
   unsigned struct_rlimit64_sz = sizeof(struct rlimit64);
   unsigned struct_timex_sz = sizeof(struct timex);
   unsigned struct_msqid_ds_sz = sizeof(struct msqid_ds);
-  unsigned struct_shmid_ds_sz = sizeof(struct shmid_ds);
   unsigned struct_mq_attr_sz = sizeof(struct mq_attr);
   unsigned struct_statvfs_sz = sizeof(struct statvfs);
   unsigned struct_statvfs64_sz = sizeof(struct statvfs64);
@@ -223,6 +224,9 @@ namespace __sanitizer {
   unsigned struct_user_fpxregs_struct_sz = sizeof(struct user_fpxregs_struct);
 #endif
 
+  int ptrace_peektext = PTRACE_PEEKTEXT;
+  int ptrace_peekdata = PTRACE_PEEKDATA;
+  int ptrace_peekuser = PTRACE_PEEKUSER;
   int ptrace_getregs = PTRACE_GETREGS;
   int ptrace_setregs = PTRACE_SETREGS;
   int ptrace_getfpregs = PTRACE_GETFPREGS;
@@ -761,23 +765,6 @@ namespace __sanitizer {
 #endif
 }  // namespace __sanitizer
 
-#define CHECK_TYPE_SIZE(TYPE) \
-  COMPILER_CHECK(sizeof(__sanitizer_##TYPE) == sizeof(TYPE))
-
-#define CHECK_SIZE_AND_OFFSET(CLASS, MEMBER)                       \
-  COMPILER_CHECK(sizeof(((__sanitizer_##CLASS *) NULL)->MEMBER) == \
-                 sizeof(((CLASS *) NULL)->MEMBER));                \
-  COMPILER_CHECK(offsetof(__sanitizer_##CLASS, MEMBER) ==          \
-                 offsetof(CLASS, MEMBER))
-
-// For sigaction, which is a function and struct at the same time,
-// and thus requires explicit "struct" in sizeof() expression.
-#define CHECK_STRUCT_SIZE_AND_OFFSET(CLASS, MEMBER)                       \
-  COMPILER_CHECK(sizeof(((struct __sanitizer_##CLASS *) NULL)->MEMBER) == \
-                 sizeof(((struct CLASS *) NULL)->MEMBER));                \
-  COMPILER_CHECK(offsetof(struct __sanitizer_##CLASS, MEMBER) ==          \
-                 offsetof(struct CLASS, MEMBER))
-
 COMPILER_CHECK(sizeof(__sanitizer_pthread_attr_t) >= sizeof(pthread_attr_t));
 
 COMPILER_CHECK(sizeof(socklen_t) == sizeof(unsigned));
@@ -932,5 +919,26 @@ CHECK_SIZE_AND_OFFSET(mntent, mnt_passno);
 #endif
 
 CHECK_TYPE_SIZE(ether_addr);
+
+#if SANITIZER_LINUX && !SANITIZER_ANDROID
+CHECK_TYPE_SIZE(ipc_perm);
+CHECK_SIZE_AND_OFFSET(ipc_perm, __key);
+CHECK_SIZE_AND_OFFSET(ipc_perm, uid);
+CHECK_SIZE_AND_OFFSET(ipc_perm, gid);
+CHECK_SIZE_AND_OFFSET(ipc_perm, cuid);
+CHECK_SIZE_AND_OFFSET(ipc_perm, cgid);
+CHECK_SIZE_AND_OFFSET(ipc_perm, mode);
+CHECK_SIZE_AND_OFFSET(ipc_perm, __seq);
+
+CHECK_TYPE_SIZE(shmid_ds);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_perm);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_segsz);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_atime);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_dtime);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_ctime);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_cpid);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_lpid);
+CHECK_SIZE_AND_OFFSET(shmid_ds, shm_nattch);
+#endif
 
 #endif  // SANITIZER_LINUX || SANITIZER_MAC

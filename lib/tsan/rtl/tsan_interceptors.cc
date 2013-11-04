@@ -1537,6 +1537,7 @@ TSAN_INTERCEPTOR(void*, freopen, char *path, char *mode, void *stream) {
 }
 
 TSAN_INTERCEPTOR(int, fclose, void *stream) {
+  // libc file streams can call user-supplied functions, see fopencookie.
   {
     SCOPED_TSAN_INTERCEPTOR(fclose, stream);
     if (stream) {
@@ -1549,6 +1550,7 @@ TSAN_INTERCEPTOR(int, fclose, void *stream) {
 }
 
 TSAN_INTERCEPTOR(uptr, fread, void *ptr, uptr size, uptr nmemb, void *f) {
+  // libc file streams can call user-supplied functions, see fopencookie.
   {
     SCOPED_TSAN_INTERCEPTOR(fread, ptr, size, nmemb, f);
     MemoryAccessRange(thr, pc, (uptr)ptr, size * nmemb, true);
@@ -1557,6 +1559,7 @@ TSAN_INTERCEPTOR(uptr, fread, void *ptr, uptr size, uptr nmemb, void *f) {
 }
 
 TSAN_INTERCEPTOR(uptr, fwrite, const void *p, uptr size, uptr nmemb, void *f) {
+  // libc file streams can call user-supplied functions, see fopencookie.
   {
     SCOPED_TSAN_INTERCEPTOR(fwrite, p, size, nmemb, f);
     MemoryAccessRange(thr, pc, (uptr)p, size * nmemb, false);
@@ -1565,7 +1568,10 @@ TSAN_INTERCEPTOR(uptr, fwrite, const void *p, uptr size, uptr nmemb, void *f) {
 }
 
 TSAN_INTERCEPTOR(int, fflush, void *stream) {
-  SCOPED_TSAN_INTERCEPTOR(fflush, stream);
+  // libc file streams can call user-supplied functions, see fopencookie.
+  {
+    SCOPED_TSAN_INTERCEPTOR(fflush, stream);
+  }
   return REAL(fflush)(stream);
 }
 
@@ -1837,38 +1843,54 @@ struct TsanInterceptorContext {
 #define COMMON_INTERCEPTOR_UNPOISON_PARAM(ctx, count) \
   do {                                                \
   } while (false)
+
 #define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size)                    \
   MemoryAccessRange(((TsanInterceptorContext *)ctx)->thr,                 \
                     ((TsanInterceptorContext *)ctx)->pc, (uptr)ptr, size, \
                     true)
+
 #define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size)                       \
   MemoryAccessRange(((TsanInterceptorContext *) ctx)->thr,                  \
                     ((TsanInterceptorContext *) ctx)->pc, (uptr) ptr, size, \
                     false)
+
 #define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)      \
   SCOPED_TSAN_INTERCEPTOR(func, __VA_ARGS__);         \
   TsanInterceptorContext _ctx = {thr, caller_pc, pc}; \
   ctx = (void *)&_ctx;                                \
   (void) ctx;
+
 #define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) \
   FdAcquire(((TsanInterceptorContext *) ctx)->thr, pc, fd)
+
 #define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) \
   FdRelease(((TsanInterceptorContext *) ctx)->thr, pc, fd)
+
 #define COMMON_INTERCEPTOR_FD_ACCESS(ctx, fd) \
   FdAccess(((TsanInterceptorContext *) ctx)->thr, pc, fd)
+
 #define COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, newfd) \
   FdSocketAccept(((TsanInterceptorContext *) ctx)->thr, pc, fd, newfd)
+
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) \
   ThreadSetName(((TsanInterceptorContext *) ctx)->thr, name)
+
+#define COMMON_INTERCEPTOR_SET_PTHREAD_NAME(ctx, thread, name) \
+  CTX()->thread_registry->SetThreadNameByUserId(thread, name)
+
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) BLOCK_REAL(name)
+
 #define COMMON_INTERCEPTOR_ON_EXIT(ctx) \
   OnExit(((TsanInterceptorContext *) ctx)->thr)
+
 #define COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m) \
   MutexLock(((TsanInterceptorContext *)ctx)->thr, \
             ((TsanInterceptorContext *)ctx)->pc, (uptr)m)
+
 #define COMMON_INTERCEPTOR_MUTEX_UNLOCK(ctx, m) \
   MutexUnlock(((TsanInterceptorContext *)ctx)->thr, \
             ((TsanInterceptorContext *)ctx)->pc, (uptr)m)
+
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
 #define TSAN_SYSCALL() \
@@ -1923,11 +1945,16 @@ static void syscall_post_fork(uptr pc, int res) {
 #define COMMON_SYSCALL_PRE_WRITE_RANGE(p, s) \
   syscall_access_range(GET_CALLER_PC(), (uptr)(p), (uptr)(s), true)
 #define COMMON_SYSCALL_POST_READ_RANGE(p, s) \
-  do { } while (false)
+  do {                                       \
+    (void)(p);                               \
+    (void)(s);                               \
+  } while (false)
 #define COMMON_SYSCALL_POST_WRITE_RANGE(p, s) \
-  do { } while (false)
-#define COMMON_SYSCALL_FD_CLOSE(fd) \
-  syscall_fd_close(GET_CALLER_PC(), fd)
+  do {                                        \
+    (void)(p);                                \
+    (void)(s);                                \
+  } while (false)
+#define COMMON_SYSCALL_FD_CLOSE(fd) syscall_fd_close(GET_CALLER_PC(), fd)
 #define COMMON_SYSCALL_PRE_FORK() \
   syscall_pre_fork(GET_CALLER_PC())
 #define COMMON_SYSCALL_POST_FORK(res) \
@@ -2191,9 +2218,15 @@ void InitializeInterceptors() {
 }
 
 void internal_start_thread(void(*func)(void *arg), void *arg) {
+  // Start the thread with signals blocked, otherwise it can steal users
+  // signals.
+  __sanitizer_kernel_sigset_t set, old;
+  internal_sigfillset(&set);
+  internal_sigprocmask(SIG_SETMASK, &set, &old);
   void *th;
   REAL(pthread_create)(&th, 0, (void*(*)(void *arg))func, arg);
   REAL(pthread_detach)(th);
+  internal_sigprocmask(SIG_SETMASK, &old, 0);
 }
 
 }  // namespace __tsan

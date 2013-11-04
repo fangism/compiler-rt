@@ -131,6 +131,8 @@ DECLARE_REAL_AND_INTERCEPTOR(void, free, void *)
   do {                                                      \
   } while (false)
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) SetThreadName(name)
+#define COMMON_INTERCEPTOR_SET_PTHREAD_NAME(ctx, thread, name) \
+    asanThreadRegistry().SetThreadNameByUserId(thread, name)
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) REAL(name)
 #define COMMON_INTERCEPTOR_ON_EXIT(ctx) OnExit()
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
@@ -139,9 +141,13 @@ DECLARE_REAL_AND_INTERCEPTOR(void, free, void *)
 #define COMMON_SYSCALL_PRE_WRITE_RANGE(p, s) ASAN_WRITE_RANGE(p, s)
 #define COMMON_SYSCALL_POST_READ_RANGE(p, s) \
   do {                                       \
+    (void)(p);                               \
+    (void)(s);                               \
   } while (false)
 #define COMMON_SYSCALL_POST_WRITE_RANGE(p, s) \
   do {                                        \
+    (void)(p);                                \
+    (void)(s);                                \
   } while (false)
 #include "sanitizer_common/sanitizer_common_syscalls.inc"
 
