@@ -180,16 +180,15 @@ static void GetCurrentStackBounds(uptr *stack_top, uptr *stack_bottom) {
 }
 
 void GetStackTrace(StackTrace *stack, uptr max_s, uptr pc, uptr bp,
-                   bool fast) {
-  if (!fast) {
+                   bool request_fast_unwind) {
+  if (!StackTrace::WillUseFastUnwind(request_fast_unwind)) {
     // Block reports from our interceptors during _Unwind_Backtrace.
     SymbolizerScope sym_scope;
-    return stack->SlowUnwindStack(pc, max_s);
+    return stack->Unwind(max_s, pc, bp, 0, 0, request_fast_unwind);
   }
-
   uptr stack_top, stack_bottom;
   GetCurrentStackBounds(&stack_top, &stack_bottom);
-  stack->FastUnwindStack(pc, bp, stack_top, stack_bottom, max_s);
+  stack->Unwind(max_s, pc, bp, stack_top, stack_bottom, request_fast_unwind);
 }
 
 void PrintWarning(uptr pc, uptr bp) {
@@ -295,14 +294,16 @@ void __msan_init() {
 
   SetDieCallback(MsanDie);
   InitTlsSize();
+
+  const char *msan_options = GetEnv("MSAN_OPTIONS");
+  InitializeFlags(&msan_flags, msan_options);
+  __sanitizer_set_report_path(common_flags()->log_path);
+
   InitializeInterceptors();
   InstallAtExitHandler(); // Needs __cxa_atexit interceptor.
 
   if (MSAN_REPLACE_OPERATORS_NEW_AND_DELETE)
     ReplaceOperatorsNewAndDelete();
-  const char *msan_options = GetEnv("MSAN_OPTIONS");
-  InitializeFlags(&msan_flags, msan_options);
-  __sanitizer_set_report_path(common_flags()->log_path);
   if (StackSizeIsUnlimited()) {
     if (common_flags()->verbosity)
       Printf("Unlimited stack, doing reexec\n");
