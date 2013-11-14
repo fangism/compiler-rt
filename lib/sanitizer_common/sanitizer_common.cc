@@ -150,22 +150,28 @@ const char *StripPathPrefix(const char *filepath,
   return pos;
 }
 
-void PrintSourceLocation(const char *file, int line, int column) {
+void PrintSourceLocation(InternalScopedString *buffer, const char *file,
+                         int line, int column) {
   CHECK(file);
-  Printf("%s", StripPathPrefix(file, common_flags()->strip_path_prefix));
+  buffer->append("%s",
+                 StripPathPrefix(file, common_flags()->strip_path_prefix));
   if (line > 0) {
-    Printf(":%d", line);
+    buffer->append(":%d", line);
     if (column > 0)
-      Printf(":%d", column);
+      buffer->append(":%d", column);
   }
 }
 
-void PrintModuleAndOffset(const char *module, uptr offset) {
-  Printf("(%s+0x%zx)",
-         StripPathPrefix(module, common_flags()->strip_path_prefix), offset);
+void PrintModuleAndOffset(InternalScopedString *buffer, const char *module,
+                          uptr offset) {
+  buffer->append("(%s+0x%zx)",
+                 StripPathPrefix(module, common_flags()->strip_path_prefix),
+                 offset);
 }
 
 void ReportErrorSummary(const char *error_message) {
+  if (!common_flags()->print_summary)
+    return;
   InternalScopedBuffer<char> buff(kMaxSummaryLength);
   internal_snprintf(buff.data(), buff.size(),
                     "SUMMARY: %s: %s", SanitizerToolName, error_message);
@@ -174,6 +180,8 @@ void ReportErrorSummary(const char *error_message) {
 
 void ReportErrorSummary(const char *error_type, const char *file,
                         int line, const char *function) {
+  if (!common_flags()->print_summary)
+    return;
   InternalScopedBuffer<char> buff(kMaxSummaryLength);
   internal_snprintf(
       buff.data(), buff.size(), "%s %s:%d %s", error_type,
@@ -183,6 +191,8 @@ void ReportErrorSummary(const char *error_type, const char *file,
 }
 
 void ReportErrorSummary(const char *error_type, StackTrace *stack) {
+  if (!common_flags()->print_summary)
+    return;
   AddressInfo ai;
 #if !SANITIZER_GO
   if (stack->size > 0 && Symbolizer::Get()->IsAvailable()) {
@@ -214,6 +224,17 @@ bool LoadedModule::containsAddress(uptr address) const {
       return true;
   }
   return false;
+}
+
+char *StripModuleName(const char *module) {
+  if (module == 0)
+    return 0;
+  const char *short_module_name = internal_strrchr(module, '/');
+  if (short_module_name)
+    short_module_name += 1;
+  else
+    short_module_name = module;
+  return internal_strdup(short_module_name);
 }
 
 }  // namespace __sanitizer

@@ -120,6 +120,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->print_stats, "print_stats");
   ParseFlag(str, &f->print_legend, "print_legend");
   ParseFlag(str, &f->atexit, "atexit");
+  ParseFlag(str, &f->coverage, "coverage");
   ParseFlag(str, &f->disable_core, "disable_core");
   ParseFlag(str, &f->allow_reexec, "allow_reexec");
   ParseFlag(str, &f->print_full_thread_history, "print_full_thread_history");
@@ -132,16 +133,9 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
 
 void InitializeFlags(Flags *f, const char *env) {
   CommonFlags *cf = common_flags();
+  SetCommonFlagDefaults();
   cf->external_symbolizer_path = GetEnv("ASAN_SYMBOLIZER_PATH");
-  cf->symbolize = true;
   cf->malloc_context_size = kDefaultMallocContextSize;
-  cf->fast_unwind_on_fatal = false;
-  cf->fast_unwind_on_malloc = true;
-  cf->strip_path_prefix = "";
-  cf->handle_ioctl = false;
-  cf->log_path = 0;
-  cf->detect_leaks = false;
-  cf->leak_check_at_exit = true;
 
   internal_memset(f, 0, sizeof(*f));
   f->quarantine_size = (ASAN_LOW_MEMORY) ? 1UL << 26 : 1UL << 28;
@@ -168,6 +162,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->print_stats = false;
   f->print_legend = true;
   f->atexit = false;
+  f->coverage = false;
   f->disable_core = (SANITIZER_WORDSIZE == 64);
   f->allow_reexec = true;
   f->print_full_thread_history = true;
@@ -547,6 +542,9 @@ void __asan_init() {
 
   if (flags()->atexit)
     Atexit(asan_atexit);
+
+  if (flags()->coverage)
+    Atexit(__sanitizer_cov_dump);
 
   // interceptors
   InitTlsSize();
