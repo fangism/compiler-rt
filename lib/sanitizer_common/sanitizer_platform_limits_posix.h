@@ -23,6 +23,8 @@
 
 // just doesn't exist on darwin8 -- should be auto-detected
 #define	HAVE_STRUCT_STATFS64			0
+// EOWNERDEAD appears in darwin11 <errno.h>
+#define	HAVE_EOWNERDEAD				0
 
 namespace __sanitizer {
   extern unsigned struct_utsname_sz;
@@ -942,7 +944,9 @@ namespace __sanitizer {
   extern unsigned IOCTL_TIOCSSERIAL;
 #endif
 
+#if HAVE_EOWNERDEAD
   extern const int errno_EOWNERDEAD;
+#endif
 }  // namespace __sanitizer
 
 #define CHECK_TYPE_SIZE(TYPE) \

@@ -764,7 +764,9 @@ namespace __sanitizer {
   unsigned IOCTL_TIOCSSERIAL = TIOCSSERIAL;
 #endif
 
+#if HAVE_EOWNERDEAD
   extern const int errno_EOWNERDEAD = EOWNERDEAD;
+#endif
 }  // namespace __sanitizer
 
 COMPILER_CHECK(sizeof(__sanitizer_pthread_attr_t) >= sizeof(pthread_attr_t));

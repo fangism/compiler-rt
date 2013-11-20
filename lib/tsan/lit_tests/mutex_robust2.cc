@@ -15,6 +15,7 @@ void *thr(void *p) {
 }
 
 int main() {
+#ifdef	EOWNERDEAD
   pthread_mutexattr_t a;
   pthread_mutexattr_init(&a);
   pthread_mutexattr_setrobust(&a, PTHREAD_MUTEX_ROBUST);
@@ -29,6 +30,7 @@ int main() {
   x = 43;
   pthread_join(th, 0);
   fprintf(stderr, "DONE\n");
+#endif
 }
 
 // This is a false positive, tsan must not bark at the data race.
