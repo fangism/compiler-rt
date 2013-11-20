@@ -705,6 +705,7 @@ int  MutexUnlock(ThreadState *thr, uptr pc, uptr addr, bool all = false);
 void MutexReadLock(ThreadState *thr, uptr pc, uptr addr);
 void MutexReadUnlock(ThreadState *thr, uptr pc, uptr addr);
 void MutexReadOrWriteUnlock(ThreadState *thr, uptr pc, uptr addr);
+void MutexRepair(ThreadState *thr, uptr pc, uptr addr);  // call on EOWNERDEAD
 
 void Acquire(ThreadState *thr, uptr pc, uptr addr);
 void AcquireGlobal(ThreadState *thr, uptr pc);
@@ -727,11 +728,11 @@ void AcquireReleaseImpl(ThreadState *thr, uptr pc, SyncClock *c);
 // so we create a reserve stack frame for it (1024b must be enough).
 #define HACKY_CALL(f) \
   __asm__ __volatile__("sub $1024, %%rsp;" \
-                       "/*.cfi_adjust_cfa_offset 1024;*/" \
+                       ".cfi_adjust_cfa_offset 1024;" \
                        ".hidden " #f "_thunk;" \
                        "call " #f "_thunk;" \
                        "add $1024, %%rsp;" \
-                       "/*.cfi_adjust_cfa_offset -1024;*/" \
+                       ".cfi_adjust_cfa_offset -1024;" \
                        ::: "memory", "cc");
 #else
 #define HACKY_CALL(f) f()

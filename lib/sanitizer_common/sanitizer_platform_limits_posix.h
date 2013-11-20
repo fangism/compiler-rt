@@ -524,7 +524,7 @@ namespace __sanitizer {
   extern unsigned struct_unimapinit_sz;
 #endif
 
-#if !SANITIZER_ANDROID
+#if !SANITIZER_ANDROID && !SANITIZER_MAC
   extern unsigned struct_sioc_sg_req_sz;
   extern unsigned struct_sioc_vif_req_sz;
 #endif
@@ -579,7 +579,7 @@ namespace __sanitizer {
   extern unsigned IOCTL_TIOCSPGRP;
   extern unsigned IOCTL_TIOCSTI;
   extern unsigned IOCTL_TIOCSWINSZ;
-#if (SANITIZER_LINUX && !SANITIZER_ANDROID) || SANITIZER_MAC
+#if (SANITIZER_LINUX && !SANITIZER_ANDROID)
   extern unsigned IOCTL_SIOCGETSGCNT;
   extern unsigned IOCTL_SIOCGETVIFCNT;
 #endif
@@ -942,6 +942,7 @@ namespace __sanitizer {
   extern unsigned IOCTL_TIOCSSERIAL;
 #endif
 
+  extern const int errno_EOWNERDEAD;
 }  // namespace __sanitizer
 
 #define CHECK_TYPE_SIZE(TYPE) \
