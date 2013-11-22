@@ -1245,11 +1245,17 @@ PRE_SYSCALL(flock)(long fd, long cmd) {}
 
 POST_SYSCALL(flock)(long res, long fd, long cmd) {}
 
-PRE_SYSCALL(io_setup)(long nr_reqs, void *ctx) {}
+PRE_SYSCALL(io_setup)(long nr_reqs, void **ctx) {
+  if (ctx) PRE_WRITE(ctx, sizeof(*ctx));
+}
 
-POST_SYSCALL(io_setup)(long res, long nr_reqs, void *ctx) {
+POST_SYSCALL(io_setup)(long res, long nr_reqs, void **ctx) {
   if (res >= 0) {
-    if (ctx) POST_WRITE(ctx, sizeof(long));
+    if (ctx) POST_WRITE(ctx, sizeof(*ctx));
+    // (*ctx) is actually a pointer to a kernel mapped page, and there are
+    // people out there who are crazy enough to peek into that page's 32-byte
+    // header.
+    if (*ctx) POST_WRITE(*ctx, 32);
   }
 }
 
@@ -2703,15 +2709,13 @@ PRE_SYSCALL(syncfs)(long fd) {}
 
 POST_SYSCALL(syncfs)(long res, long fd) {}
 
-PRE_SYSCALL(perf_event_open)(void *attr_uptr, long pid, long cpu, long group_fd,
-                             long flags) {}
-
-POST_SYSCALL(perf_event_open)(long res, void *attr_uptr, long pid, long cpu,
-                              long group_fd, long flags) {
-  if (res >= 0) {
-    if (attr_uptr) POST_WRITE(attr_uptr, struct_perf_event_attr_sz);
-  }
+PRE_SYSCALL(perf_event_open)(__sanitizer_perf_event_attr *attr_uptr, long pid,
+                             long cpu, long group_fd, long flags) {
+  if (attr_uptr) PRE_READ(attr_uptr, attr_uptr->size);
 }
+
+POST_SYSCALL(perf_event_open)(long res, __sanitizer_perf_event_attr *attr_uptr,
+                              long pid, long cpu, long group_fd, long flags) {}
 
 PRE_SYSCALL(mmap_pgoff)(long addr, long len, long prot, long flags, long fd,
                         long pgoff) {}
