@@ -160,6 +160,7 @@ class ScopedInterceptor {
   ~ScopedInterceptor();
  private:
   ThreadState *const thr_;
+  const uptr pc_;
   const int in_rtl_;
   bool in_ignored_lib_;
 };
@@ -167,6 +168,7 @@ class ScopedInterceptor {
 ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
                                      uptr pc)
     : thr_(thr)
+    , pc_(pc)
     , in_rtl_(thr->in_rtl)
     , in_ignored_lib_(false) {
   if (thr_->in_rtl == 0) {
@@ -180,14 +182,14 @@ ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
   if (!thr_->in_ignored_lib && libignore()->IsIgnored(pc)) {
     in_ignored_lib_ = true;
     thr_->in_ignored_lib = true;
-    ThreadIgnoreBegin(thr_);
+    ThreadIgnoreBegin(thr_, pc_);
   }
 }
 
 ScopedInterceptor::~ScopedInterceptor() {
   if (in_ignored_lib_) {
     thr_->in_ignored_lib = false;
-    ThreadIgnoreEnd(thr_);
+    ThreadIgnoreEnd(thr_, pc_);
   }
   thr_->in_rtl--;
   if (thr_->in_rtl == 0) {
@@ -360,9 +362,9 @@ TSAN_INTERCEPTOR(int, __cxa_atexit, void (*f)(void *a), void *arg, void *dso) {
   if (dso) {
     // Memory allocation in __cxa_atexit will race with free during exit,
     // because we do not see synchronization around atexit callback list.
-    ThreadIgnoreBegin(thr);
+    ThreadIgnoreBegin(thr, pc);
     int res = REAL(__cxa_atexit)(f, arg, dso);
-    ThreadIgnoreEnd(thr);
+    ThreadIgnoreEnd(thr, pc);
     return res;
   }
   return atexit_ctx->atexit(thr, pc, false, (void(*)())f, arg);
@@ -1768,13 +1770,13 @@ TSAN_INTERCEPTOR(int, getaddrinfo, void *node, void *service,
   // We miss atomic synchronization in getaddrinfo,
   // and can report false race between malloc and free
   // inside of getaddrinfo. So ignore memory accesses.
-  ThreadIgnoreBegin(thr);
+  ThreadIgnoreBegin(thr, pc);
   // getaddrinfo calls fopen, which can be intercepted by user.
   thr->in_rtl--;
   CHECK_EQ(thr->in_rtl, 0);
   int res = REAL(getaddrinfo)(node, service, hints, rv);
   thr->in_rtl++;
-  ThreadIgnoreEnd(thr);
+  ThreadIgnoreEnd(thr, pc);
   return res;
 }
 
@@ -1831,6 +1833,14 @@ struct TsanInterceptorContext {
   const uptr caller_pc;
   const uptr pc;
 };
+
+static void HandleRecvmsg(ThreadState *thr, uptr pc,
+    __sanitizer_msghdr *msg) {
+  int fds[64];
+  int cnt = ExtractRecvmsgFDs(msg, fds, ARRAY_SIZE(fds));
+  for (int i = 0; i < cnt; i++)
+    FdEventCreate(thr, pc, fds[i]);
+}
 
 #include "sanitizer_common/sanitizer_platform_interceptors.h"
 // Causes interceptor recursion (getpwuid_r() calls fopen())
@@ -1898,6 +1908,10 @@ struct TsanInterceptorContext {
   MutexRepair(((TsanInterceptorContext *)ctx)->thr, \
             ((TsanInterceptorContext *)ctx)->pc, (uptr)m)
 
+#define COMMON_INTERCEPTOR_HANDLE_RECVMSG(ctx, msg) \
+  HandleRecvmsg(((TsanInterceptorContext *)ctx)->thr, \
+      ((TsanInterceptorContext *)ctx)->pc, msg)
+
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
 #define TSAN_SYSCALL() \
@@ -1927,10 +1941,33 @@ static void syscall_access_range(uptr pc, uptr p, uptr s, bool write) {
   MemoryAccessRange(thr, pc, p, s, write);
 }
 
+static void syscall_acquire(uptr pc, uptr addr) {
+  TSAN_SYSCALL();
+  Acquire(thr, pc, addr);
+  Printf("syscall_acquire(%p)\n", addr);
+}
+
+static void syscall_release(uptr pc, uptr addr) {
+  TSAN_SYSCALL();
+  Printf("syscall_release(%p)\n", addr);
+  Release(thr, pc, addr);
+}
+
 static void syscall_fd_close(uptr pc, int fd) {
   TSAN_SYSCALL();
-  if (fd >= 0)
-    FdClose(thr, pc, fd);
+  FdClose(thr, pc, fd);
+}
+
+static USED void syscall_fd_acquire(uptr pc, int fd) {
+  TSAN_SYSCALL();
+  FdAcquire(thr, pc, fd);
+  Printf("syscall_fd_acquire(%p)\n", fd);
+}
+
+static USED void syscall_fd_release(uptr pc, int fd) {
+  TSAN_SYSCALL();
+  Printf("syscall_fd_release(%p)\n", fd);
+  FdRelease(thr, pc, fd);
 }
 
 static void syscall_pre_fork(uptr pc) {
@@ -1949,23 +1986,40 @@ static void syscall_post_fork(uptr pc, int res) {
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) \
   syscall_access_range(GET_CALLER_PC(), (uptr)(p), (uptr)(s), false)
+
 #define COMMON_SYSCALL_PRE_WRITE_RANGE(p, s) \
   syscall_access_range(GET_CALLER_PC(), (uptr)(p), (uptr)(s), true)
+
 #define COMMON_SYSCALL_POST_READ_RANGE(p, s) \
   do {                                       \
     (void)(p);                               \
     (void)(s);                               \
   } while (false)
+
 #define COMMON_SYSCALL_POST_WRITE_RANGE(p, s) \
   do {                                        \
     (void)(p);                                \
     (void)(s);                                \
   } while (false)
+
+#define COMMON_SYSCALL_ACQUIRE(addr) \
+    syscall_acquire(GET_CALLER_PC(), (uptr)(addr))
+
+#define COMMON_SYSCALL_RELEASE(addr) \
+    syscall_release(GET_CALLER_PC(), (uptr)(addr))
+
 #define COMMON_SYSCALL_FD_CLOSE(fd) syscall_fd_close(GET_CALLER_PC(), fd)
+
+#define COMMON_SYSCALL_FD_ACQUIRE(fd) syscall_fd_acquire(GET_CALLER_PC(), fd)
+
+#define COMMON_SYSCALL_FD_RELEASE(fd) syscall_fd_release(GET_CALLER_PC(), fd)
+
 #define COMMON_SYSCALL_PRE_FORK() \
   syscall_pre_fork(GET_CALLER_PC())
+
 #define COMMON_SYSCALL_POST_FORK(res) \
   syscall_post_fork(GET_CALLER_PC(), res)
+
 #include "sanitizer_common/sanitizer_common_syscalls.inc"
 
 namespace __tsan {

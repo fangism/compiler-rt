@@ -20,23 +20,30 @@
 #include "lsan_common.h"
 #include "lsan_thread.h"
 
+bool lsan_inited;
+bool lsan_init_is_running;
+
 namespace __lsan {
 
 static void InitializeCommonFlags() {
   CommonFlags *cf = common_flags();
-  SetCommonFlagDefaults();
+  SetCommonFlagsDefaults(cf);
   cf->external_symbolizer_path = GetEnv("LSAN_SYMBOLIZER_PATH");
   cf->malloc_context_size = 30;
   cf->detect_leaks = true;
 
-  ParseCommonFlagsFromString(GetEnv("LSAN_OPTIONS"));
+  ParseCommonFlagsFromString(cf, GetEnv("LSAN_OPTIONS"));
 }
 
-void Init() {
-  static bool inited;
-  if (inited)
+}  // namespace __lsan
+
+using namespace __lsan;  // NOLINT
+
+extern "C" void __lsan_init() {
+  CHECK(!lsan_init_is_running);
+  if (lsan_inited)
     return;
-  inited = true;
+  lsan_init_is_running = true;
   SanitizerToolName = "LeakSanitizer";
   InitializeCommonFlags();
   InitializeAllocator();
@@ -58,6 +65,7 @@ void Init() {
   InitCommonLsan();
   if (common_flags()->detect_leaks && common_flags()->leak_check_at_exit)
     Atexit(DoLeakCheck);
+  lsan_inited = true;
+  lsan_init_is_running = false;
 }
 
-}  // namespace __lsan

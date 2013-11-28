@@ -81,7 +81,6 @@ namespace __sanitizer {
   const unsigned struct_kernel_stat_sz = 144;
   const unsigned struct_kernel_stat64_sz = 104;
 #endif
-  const unsigned struct_io_event_sz = 32;
   struct __sanitizer_perf_event_attr {
     unsigned type;
     unsigned size;
@@ -120,8 +119,17 @@ namespace __sanitizer {
     u64   aio_reserved3;
   };
 
+  struct __sanitizer_io_event {
+    u64 data;
+    u64 obj;
+    u64 res;
+    u64 res2;
+  };
+
   const unsigned iocb_cmd_pread = 0;
   const unsigned iocb_cmd_pwrite = 1;
+  const unsigned iocb_cmd_preadv = 7;
+  const unsigned iocb_cmd_pwritev = 8;
 
   struct __sanitizer___sysctl_args {
     int *name;
@@ -295,6 +303,8 @@ namespace __sanitizer {
     // more fields that we don't care about
   };
 #endif
+
+  typedef long __sanitizer_clock_t;
 
 #if SANITIZER_LINUX
 #if defined(_LP64) || defined(__x86_64__)

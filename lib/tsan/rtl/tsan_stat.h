@@ -356,6 +356,7 @@ enum StatType {
   StatInt_sched_getaffinity,
   StatInt_strerror,
   StatInt_strerror_r,
+  StatInt___xpg_strerror_r,
   StatInt_scandir,
   StatInt_scandir64,
   StatInt_getgroups,
@@ -410,6 +411,8 @@ enum StatType {
   StatInt_lrand48_r,
   StatInt_getline,
   StatInt_getdelim,
+  StatInt_iconv,
+  StatInt_times,
 
   StatInt_pthread_attr_getdetachstate,
   StatInt_pthread_attr_getguardsize,

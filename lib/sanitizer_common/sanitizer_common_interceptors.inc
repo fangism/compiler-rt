@@ -25,13 +25,14 @@
 //   COMMON_INTERCEPTOR_MUTEX_UNLOCK
 //   COMMON_INTERCEPTOR_MUTEX_REPAIR
 //   COMMON_INTERCEPTOR_SET_PTHREAD_NAME
+//   COMMON_INTERCEPTOR_HANDLE_RECVMSG
 //===----------------------------------------------------------------------===//
 #include "interception/interception.h"
 #include "sanitizer_platform_interceptors.h"
 
 #include <stdarg.h>
 
-#if SANITIZER_WINDOWS
+#if SANITIZER_WINDOWS && !defined(va_copy)
 #define va_copy(dst, src) ((dst) = (src))
 #endif // _WIN32
 
@@ -53,6 +54,10 @@
 
 #ifndef COMMON_INTERCEPTOR_MUTEX_REPAIR
 #define COMMON_INTERCEPTOR_MUTEX_REPAIR(ctx, m) {}
+#endif
+
+#ifndef COMMON_INTERCEPTOR_HANDLE_RECVMSG
+#define COMMON_INTERCEPTOR_HANDLE_RECVMSG(ctx, msg) ((void)(msg))
 #endif
 
 #if SANITIZER_INTERCEPT_STRCMP
@@ -1402,7 +1407,10 @@ INTERCEPTOR(SSIZE_T, recvmsg, int fd, struct __sanitizer_msghdr *msg,
   SSIZE_T res = REAL(recvmsg)(fd, msg, flags);
   if (res >= 0) {
     if (fd >= 0) COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd);
-    if (msg) write_msghdr(ctx, msg, res);
+    if (msg) {
+      write_msghdr(ctx, msg, res);
+      COMMON_INTERCEPTOR_HANDLE_RECVMSG(ctx, msg);
+    }
   }
   return res;
 }
@@ -1846,6 +1854,21 @@ INTERCEPTOR(char *, strerror_r, int errnum, char *buf, SIZE_T buflen) {
 #define INIT_STRERROR_R COMMON_INTERCEPT_FUNCTION(strerror_r);
 #else
 #define INIT_STRERROR_R
+#endif
+
+#if SANITIZER_INTERCEPT_XPG_STRERROR_R
+INTERCEPTOR(int, __xpg_strerror_r, int errnum, char *buf, SIZE_T buflen) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, __xpg_strerror_r, errnum, buf, buflen);
+  int res = REAL(__xpg_strerror_r)(errnum, buf, buflen);
+  // This version always returns a null-terminated string.
+  if (buf && buflen)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, buf, REAL(strlen)(buf) + 1);
+  return res;
+}
+#define INIT_XPG_STRERROR_R COMMON_INTERCEPT_FUNCTION(__xpg_strerror_r);
+#else
+#define INIT_XPG_STRERROR_R
 #endif
 
 #if SANITIZER_INTERCEPT_SCANDIR
@@ -2832,6 +2855,45 @@ INTERCEPTOR(SSIZE_T, getdelim, char **lineptr, SIZE_T *n, int delim,
 #define INIT_GETLINE
 #endif
 
+#if SANITIZER_INTERCEPT_ICONV
+INTERCEPTOR(SIZE_T, iconv, void *cd, char **inbuf, SIZE_T *inbytesleft,
+            char **outbuf, SIZE_T *outbytesleft) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, iconv, cd, inbuf, inbytesleft, outbuf,
+                           outbytesleft);
+  if (inbytesleft)
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, inbytesleft, sizeof(*inbytesleft));
+  if (inbuf && inbytesleft)
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, *inbuf, *inbytesleft);
+  if (outbytesleft)
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, outbytesleft, sizeof(*outbytesleft));
+  void *outbuf_orig = outbuf ? *outbuf : 0;
+  SIZE_T res = REAL(iconv)(cd, inbuf, inbytesleft, outbuf, outbytesleft);
+  if (res != (SIZE_T) - 1 && outbuf && *outbuf > outbuf_orig) {
+    SIZE_T sz = (char *)*outbuf - (char *)outbuf_orig;
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, outbuf_orig, sz);
+  }
+  return res;
+}
+#define INIT_ICONV COMMON_INTERCEPT_FUNCTION(iconv);
+#else
+#define INIT_ICONV
+#endif
+
+#if SANITIZER_INTERCEPT_TIMES
+INTERCEPTOR(__sanitizer_clock_t, times, void *tms) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, times, tms);
+  __sanitizer_clock_t res = REAL(times)(tms);
+  if (res != (__sanitizer_clock_t)-1 && tms)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, tms, struct_tms_sz);
+  return res;
+}
+#define INIT_TIMES COMMON_INTERCEPT_FUNCTION(times);
+#else
+#define INIT_TIMES
+#endif
+
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_STRCMP;                             \
   INIT_STRNCMP;                            \
@@ -2897,6 +2959,7 @@ INTERCEPTOR(SSIZE_T, getdelim, char **lineptr, SIZE_T *n, int delim,
   INIT_SCHED_GETAFFINITY;                  \
   INIT_STRERROR;                           \
   INIT_STRERROR_R;                         \
+  INIT_XPG_STRERROR_R;                     \
   INIT_SCANDIR;                            \
   INIT_SCANDIR64;                          \
   INIT_GETGROUPS;                          \
@@ -2941,4 +3004,6 @@ INTERCEPTOR(SSIZE_T, getdelim, char **lineptr, SIZE_T *n, int delim,
   INIT_LGAMMA_R;                           \
   INIT_DRAND48_R;                          \
   INIT_GETLINE;                            \
+  INIT_ICONV;                              \
+  INIT_TIMES;                              \
 /**/

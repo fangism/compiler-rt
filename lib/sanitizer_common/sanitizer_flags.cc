@@ -18,10 +18,9 @@
 
 namespace __sanitizer {
 
-void SetCommonFlagDefaults() {
-  CommonFlags *f = common_flags();
+void SetCommonFlagsDefaults(CommonFlags *f) {
   f->symbolize = true;
-  f->external_symbolizer_path = "";
+  f->external_symbolizer_path = 0;
   f->strip_path_prefix = "";
   f->fast_unwind_on_fatal = false;
   f->fast_unwind_on_malloc = true;
@@ -35,8 +34,7 @@ void SetCommonFlagDefaults() {
   f->print_summary = true;
 }
 
-void ParseCommonFlagsFromString(const char *str) {
-  CommonFlags *f = common_flags();
+void ParseCommonFlagsFromString(CommonFlags *f, const char *str) {
   ParseFlag(str, &f->symbolize, "symbolize");
   ParseFlag(str, &f->external_symbolizer_path, "external_symbolizer_path");
   ParseFlag(str, &f->strip_path_prefix, "strip_path_prefix");
