@@ -1088,6 +1088,10 @@ static void *MsanThreadStartFunc(void *arg) {
     Die();
   }
   atomic_store(&p->done, 1, memory_order_release);
+
+  GetThreadStackTopAndBottom(/* at_initialization */ false,
+                             &msan_stack_bounds.stack_top,
+                             &msan_stack_bounds.stack_bottom);
   return callback(param);
 }
 
@@ -1195,8 +1199,8 @@ static void MlockIsUnsupported() {
   static atomic_uint8_t printed;
   if (atomic_exchange(&printed, 1, memory_order_relaxed))
     return;
-  if (common_flags()->verbosity > 0)
-    Printf("INFO: MemorySanitizer ignores mlock/mlockall/munlock/munlockall\n");
+  VPrintf(1,
+          "INFO: MemorySanitizer ignores mlock/mlockall/munlock/munlockall\n");
 }
 
 INTERCEPTOR(int, mlock, const void *addr, uptr len) {
@@ -1242,11 +1246,10 @@ extern "C" int *__errno_location(void);
       CHECK_UNPOISONED_0(x, n);                                 \
   } while (0)
 
-#define MSAN_INTERCEPT_FUNC(name)                                   \
-  do {                                                              \
-    if ((!INTERCEPT_FUNCTION(name) || !REAL(name)) &&               \
-        common_flags()->verbosity > 0)                              \
-      Report("MemorySanitizer: failed to intercept '" #name "'\n"); \
+#define MSAN_INTERCEPT_FUNC(name)                                       \
+  do {                                                                  \
+    if ((!INTERCEPT_FUNCTION(name) || !REAL(name)))                     \
+      VReport(1, "MemorySanitizer: failed to intercept '" #name "'\n"); \
   } while (0)
 
 #define COMMON_INTERCEPT_FUNCTION(name) MSAN_INTERCEPT_FUNC(name)
