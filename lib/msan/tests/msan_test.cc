@@ -1061,6 +1061,26 @@ TEST(MemorySanitizer, gethostbyname_r) {
   EXPECT_NOT_POISONED(err);
 }
 
+TEST(MemorySanitizer, gethostbyname_r_bad_host_name) {
+  char buf[2000];
+  struct hostent he;
+  struct hostent *result;
+  int err;
+  int res = gethostbyname_r("bad-host-name", &he, buf, sizeof(buf), &result, &err);
+  ASSERT_EQ((struct hostent *)0, result);
+  EXPECT_NOT_POISONED(err);
+}
+
+TEST(MemorySanitizer, gethostbyname_r_erange) {
+  char buf[5];
+  struct hostent he;
+  struct hostent *result;
+  int err;
+  int res = gethostbyname_r("localhost", &he, buf, sizeof(buf), &result, &err);
+  ASSERT_EQ(ERANGE, res);
+  EXPECT_NOT_POISONED(err);
+}
+
 TEST(MemorySanitizer, gethostbyname2_r) {
   char buf[2000];
   struct hostent he;
@@ -1468,6 +1488,45 @@ TEST(MemorySanitizer, stpcpy) {  // NOLINT
   EXPECT_NOT_POISONED(y[0]);
   EXPECT_POISONED(y[1]);
   EXPECT_NOT_POISONED(y[2]);
+}
+
+TEST(MemorySanitizer, strcat) {  // NOLINT
+  char a[10];
+  char b[] = "def";
+  strcpy(a, "abc");
+  __msan_poison(b + 1, 1);
+  strcat(a, b);
+  EXPECT_NOT_POISONED(a[3]);
+  EXPECT_POISONED(a[4]);
+  EXPECT_NOT_POISONED(a[5]);
+  EXPECT_NOT_POISONED(a[6]);
+  EXPECT_POISONED(a[7]);
+}
+
+TEST(MemorySanitizer, strncat) {  // NOLINT
+  char a[10];
+  char b[] = "def";
+  strcpy(a, "abc");
+  __msan_poison(b + 1, 1);
+  strncat(a, b, 5);
+  EXPECT_NOT_POISONED(a[3]);
+  EXPECT_POISONED(a[4]);
+  EXPECT_NOT_POISONED(a[5]);
+  EXPECT_NOT_POISONED(a[6]);
+  EXPECT_POISONED(a[7]);
+}
+
+TEST(MemorySanitizer, strncat_overflow) {  // NOLINT
+  char a[10];
+  char b[] = "def";
+  strcpy(a, "abc");
+  __msan_poison(b + 1, 1);
+  strncat(a, b, 2);
+  EXPECT_NOT_POISONED(a[3]);
+  EXPECT_POISONED(a[4]);
+  EXPECT_NOT_POISONED(a[5]);
+  EXPECT_POISONED(a[6]);
+  EXPECT_POISONED(a[7]);
 }
 
 TEST(MemorySanitizer, strtol) {

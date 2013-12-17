@@ -284,11 +284,10 @@ INTERCEPTOR(char *, strcat, char *dest, const char *src) {  // NOLINT
 INTERCEPTOR(char *, strncat, char *dest, const char *src, SIZE_T n) {  // NOLINT
   ENSURE_MSAN_INITED();
   SIZE_T dest_size = REAL(strlen)(dest);
-  SIZE_T copy_size = REAL(strlen)(src);
-  if (copy_size < n)
-    copy_size++;  // trailing \0
+  SIZE_T copy_size = REAL(strnlen)(src, n);
   char *res = REAL(strncat)(dest, src, n);  // NOLINT
   __msan_copy_poison(dest + dest_size, src, copy_size);
+  __msan_unpoison(dest + dest_size + copy_size, 1); // \0
   return res;
 }
 
@@ -948,7 +947,7 @@ static int msan_dl_iterate_phdr_cb(__sanitizer_dl_phdr_info *info, SIZE_T size,
   }
   dl_iterate_phdr_data *cbdata = (dl_iterate_phdr_data *)data;
   UnpoisonParam(3);
-  return cbdata->callback(info, size, cbdata->data);
+  return IndirectExternCall(cbdata->callback)(info, size, cbdata->data);
 }
 
 INTERCEPTOR(int, dl_iterate_phdr, dl_iterate_phdr_cb callback, void *data) {
@@ -985,7 +984,7 @@ static void SignalHandler(int signo) {
   typedef void (*signal_cb)(int x);
   signal_cb cb =
       (signal_cb)atomic_load(&sigactions[signo], memory_order_relaxed);
-  cb(signo);
+  IndirectExternCall(cb)(signo);
 }
 
 static void SignalAction(int signo, void *si, void *uc) {
@@ -997,7 +996,7 @@ static void SignalAction(int signo, void *si, void *uc) {
   typedef void (*sigaction_cb)(int, void *, void *);
   sigaction_cb cb =
       (sigaction_cb)atomic_load(&sigactions[signo], memory_order_relaxed);
-  cb(signo, si, uc);
+  IndirectExternCall(cb)(signo, si, uc);
 }
 
 INTERCEPTOR(int, sigaction, int signo, const __sanitizer_sigaction *act,
@@ -1070,6 +1069,11 @@ static void thread_finalize(void *v) {
     return;
   }
   MsanAllocatorThreadFinish();
+  __msan_unpoison((void *)msan_stack_bounds.stack_addr,
+                  msan_stack_bounds.stack_size);
+  if (msan_stack_bounds.tls_size)
+    __msan_unpoison((void *)msan_stack_bounds.tls_addr,
+                    msan_stack_bounds.tls_size);
 }
 
 struct ThreadParam {
@@ -1089,10 +1093,11 @@ static void *MsanThreadStartFunc(void *arg) {
   }
   atomic_store(&p->done, 1, memory_order_release);
 
-  GetThreadStackTopAndBottom(/* at_initialization */ false,
-                             &msan_stack_bounds.stack_top,
-                             &msan_stack_bounds.stack_bottom);
-  return callback(param);
+  GetThreadStackAndTls(/* main */ false, &msan_stack_bounds.stack_addr,
+                       &msan_stack_bounds.stack_size,
+                       &msan_stack_bounds.tls_addr,
+                       &msan_stack_bounds.tls_size);
+  return IndirectExternCall(callback)(param);
 }
 
 INTERCEPTOR(int, pthread_create, void *th, void *attr, void *(*callback)(void*),
@@ -1162,7 +1167,7 @@ struct MSanAtExitRecord {
 void MSanAtExitWrapper(void *arg) {
   UnpoisonParam(1);
   MSanAtExitRecord *r = (MSanAtExitRecord *)arg;
-  r->func(r->arg);
+  IndirectExternCall(r->func)(r->arg);
   InternalFree(r);
 }
 
