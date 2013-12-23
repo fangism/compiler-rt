@@ -17,6 +17,7 @@
 #include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_flags.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
+#include "sanitizer_common/sanitizer_procmaps.h"
 #include "sanitizer_common/sanitizer_stackdepot.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
 #include "sanitizer_common/sanitizer_stoptheworld.h"
@@ -26,7 +27,8 @@
 #if CAN_SANITIZE_LEAKS
 namespace __lsan {
 
-// This mutex is used to prevent races between DoLeakCheck and IgnoreObject.
+// This mutex is used to prevent races between DoLeakCheck and IgnoreObject, and
+// also to protect the global list of root regions.
 BlockingMutex global_mutex(LINKER_INITIALIZED);
 
 THREADLOCAL int disable_counter;
@@ -41,14 +43,15 @@ static void InitializeFlags() {
   f->resolution = 0;
   f->max_leaks = 0;
   f->exitcode = 23;
+  f->print_suppressions = true;
   f->suppressions="";
   f->use_registers = true;
   f->use_globals = true;
   f->use_stacks = true;
   f->use_tls = true;
+  f->use_root_regions = true;
   f->use_unaligned = false;
   f->use_poisoned = false;
-  f->verbosity = 0;
   f->log_pointers = false;
   f->log_threads = false;
 
@@ -58,6 +61,7 @@ static void InitializeFlags() {
     ParseFlag(options, &f->use_globals, "use_globals");
     ParseFlag(options, &f->use_stacks, "use_stacks");
     ParseFlag(options, &f->use_tls, "use_tls");
+    ParseFlag(options, &f->use_root_regions, "use_root_regions");
     ParseFlag(options, &f->use_unaligned, "use_unaligned");
     ParseFlag(options, &f->use_poisoned, "use_poisoned");
     ParseFlag(options, &f->report_objects, "report_objects");
@@ -65,10 +69,10 @@ static void InitializeFlags() {
     CHECK_GE(&f->resolution, 0);
     ParseFlag(options, &f->max_leaks, "max_leaks");
     CHECK_GE(&f->max_leaks, 0);
-    ParseFlag(options, &f->verbosity, "verbosity");
     ParseFlag(options, &f->log_pointers, "log_pointers");
     ParseFlag(options, &f->log_threads, "log_threads");
     ParseFlag(options, &f->exitcode, "exitcode");
+    ParseFlag(options, &f->print_suppressions, "print_suppressions");
     ParseFlag(options, &f->suppressions, "suppressions");
   }
 }
@@ -77,8 +81,8 @@ SuppressionContext *suppression_ctx;
 
 void InitializeSuppressions() {
   CHECK(!suppression_ctx);
-  ALIGNED(64) static char placeholder_[sizeof(SuppressionContext)];
-  suppression_ctx = new(placeholder_) SuppressionContext;
+  ALIGNED(64) static char placeholder[sizeof(SuppressionContext)];
+  suppression_ctx = new(placeholder) SuppressionContext;
   char *suppressions_from_file;
   uptr buffer_size;
   if (ReadFileToBuffer(flags()->suppressions, &suppressions_from_file,
@@ -93,8 +97,22 @@ void InitializeSuppressions() {
     suppression_ctx->Parse(__lsan_default_suppressions());
 }
 
+struct RootRegion {
+  const void *begin;
+  uptr size;
+};
+
+InternalMmapVector<RootRegion> *root_regions;
+
+void InitializeRootRegions() {
+  CHECK(!root_regions);
+  ALIGNED(64) static char placeholder[sizeof(InternalMmapVector<RootRegion>)];
+  root_regions = new(placeholder) InternalMmapVector<RootRegion>(1);
+}
+
 void InitCommonLsan() {
   InitializeFlags();
+  InitializeRootRegions();
   if (common_flags()->detect_leaks) {
     // Initialization which can fail or print warnings should only be done if
     // LSan is actually enabled.
@@ -245,6 +263,38 @@ static void ProcessThreads(SuspendedThreadsList const &suspended_threads,
   }
 }
 
+static void ProcessRootRegion(Frontier *frontier, uptr root_begin,
+                              uptr root_end) {
+  MemoryMappingLayout proc_maps(/*cache_enabled*/true);
+  uptr begin, end, prot;
+  while (proc_maps.Next(&begin, &end,
+                        /*offset*/ 0, /*filename*/ 0, /*filename_size*/ 0,
+                        &prot)) {
+    uptr intersection_begin = Max(root_begin, begin);
+    uptr intersection_end = Min(end, root_end);
+    if (intersection_begin >= intersection_end) continue;
+    bool is_readable = prot & MemoryMappingLayout::kProtectionRead;
+    if (flags()->log_pointers)
+      Report("Root region %p-%p intersects with mapped region %p-%p (%s)\n",
+             root_begin, root_end, begin, end,
+             is_readable ? "readable" : "unreadable");
+    if (is_readable)
+      ScanRangeForPointers(intersection_begin, intersection_end, frontier,
+                           "ROOT", kReachable);
+  }
+}
+
+// Scans root regions for heap pointers.
+static void ProcessRootRegions(Frontier *frontier) {
+  if (!flags()->use_root_regions) return;
+  CHECK(root_regions);
+  for (uptr i = 0; i < root_regions->size(); i++) {
+    RootRegion region = (*root_regions)[i];
+    uptr begin_addr = reinterpret_cast<uptr>(region.begin);
+    ProcessRootRegion(frontier, begin_addr, begin_addr + region.size);
+  }
+}
+
 static void FloodFillTag(Frontier *frontier, ChunkTag tag) {
   while (frontier->size()) {
     uptr next_chunk = frontier->back();
@@ -284,6 +334,7 @@ static void ClassifyAllChunks(SuspendedThreadsList const &suspended_threads) {
   if (flags()->use_globals)
     ProcessGlobalRegions(&frontier);
   ProcessThreads(suspended_threads, &frontier);
+  ProcessRootRegions(&frontier);
   FloodFillTag(&frontier, kReachable);
   // The check here is relatively expensive, so we do this in a separate flood
   // fill. That way we can skip the check for chunks that are reachable
@@ -416,19 +467,20 @@ void DoLeakCheck() {
     Printf("%s", d.End());
     param.leak_report.PrintLargest(flags()->max_leaks);
   }
-  if (have_unsuppressed || (flags()->verbosity >= 1)) {
+  if (flags()->print_suppressions)
     PrintMatchedSuppressions();
+  if (have_unsuppressed) {
     param.leak_report.PrintSummary();
+    if (flags()->exitcode)
+      internal__exit(flags()->exitcode);
   }
-  if (have_unsuppressed && flags()->exitcode)
-    internal__exit(flags()->exitcode);
 }
 
 static Suppression *GetSuppressionForAddr(uptr addr) {
   static const uptr kMaxAddrFrames = 16;
   InternalScopedBuffer<AddressInfo> addr_frames(kMaxAddrFrames);
   for (uptr i = 0; i < kMaxAddrFrames; i++) new (&addr_frames[i]) AddressInfo();
-  uptr addr_frames_num = Symbolizer::Get()->SymbolizeCode(
+  uptr addr_frames_num = Symbolizer::Get()->SymbolizePC(
       addr, addr_frames.data(), kMaxAddrFrames);
   for (uptr i = 0; i < addr_frames_num; i++) {
     Suppression* s;
@@ -560,13 +612,51 @@ void __lsan_ignore_object(const void *p) {
   // locked.
   BlockingMutexLock l(&global_mutex);
   IgnoreObjectResult res = IgnoreObjectLocked(p);
-  if (res == kIgnoreObjectInvalid && flags()->verbosity >= 2)
-    Report("__lsan_ignore_object(): no heap object found at %p", p);
-  if (res == kIgnoreObjectAlreadyIgnored && flags()->verbosity >= 2)
-    Report("__lsan_ignore_object(): "
+  if (res == kIgnoreObjectInvalid)
+    VReport(1, "__lsan_ignore_object(): no heap object found at %p", p);
+  if (res == kIgnoreObjectAlreadyIgnored)
+    VReport(1, "__lsan_ignore_object(): "
            "heap object at %p is already being ignored\n", p);
-  if (res == kIgnoreObjectSuccess && flags()->verbosity >= 3)
-    Report("__lsan_ignore_object(): ignoring heap object at %p\n", p);
+  if (res == kIgnoreObjectSuccess)
+    VReport(1, "__lsan_ignore_object(): ignoring heap object at %p\n", p);
+#endif  // CAN_SANITIZE_LEAKS
+}
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_register_root_region(const void *begin, uptr size) {
+#if CAN_SANITIZE_LEAKS
+  BlockingMutexLock l(&global_mutex);
+  CHECK(root_regions);
+  RootRegion region = {begin, size};
+  root_regions->push_back(region);
+  VReport(1, "Registered root region at %p of size %llu\n", begin, size);
+#endif  // CAN_SANITIZE_LEAKS
+}
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __lsan_unregister_root_region(const void *begin, uptr size) {
+#if CAN_SANITIZE_LEAKS
+  BlockingMutexLock l(&global_mutex);
+  CHECK(root_regions);
+  bool removed = false;
+  for (uptr i = 0; i < root_regions->size(); i++) {
+    RootRegion region = (*root_regions)[i];
+    if (region.begin == begin && region.size == size) {
+      removed = true;
+      uptr last_index = root_regions->size() - 1;
+      (*root_regions)[i] = (*root_regions)[last_index];
+      root_regions->pop_back();
+      VReport(1, "Unregistered root region at %p of size %llu\n", begin, size);
+      break;
+    }
+  }
+  if (!removed) {
+    Report(
+        "__lsan_unregister_root_region(): region at %p of size %llu has not "
+        "been registered.\n",
+        begin, size);
+    Die();
+  }
 #endif  // CAN_SANITIZE_LEAKS
 }
 

@@ -356,9 +356,10 @@ uptr GetListOfModules(LoadedModule *modules, uptr max_modules,
 #ifndef SANITIZER_GO
 uptr indirect_call_wrapper;
 
-void InitializeIndirectCallWrapping(const char *wrapper_name) {
-  CHECK(wrapper_name && *wrapper_name);
-  indirect_call_wrapper = (uptr)dlsym(RTLD_DEFAULT, wrapper_name);
+void SetIndirectCallWrapper(uptr wrapper) {
+  CHECK(!indirect_call_wrapper);
+  CHECK(wrapper);
+  indirect_call_wrapper = wrapper;
 }
 #endif
 

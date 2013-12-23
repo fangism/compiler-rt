@@ -36,8 +36,7 @@ static void PrintStackFramePrefix(InternalScopedString *buffer, uptr frame_num,
   buffer->append("    #%zu 0x%zx", frame_num, pc);
 }
 
-void StackTrace::PrintStack(const uptr *addr, uptr size,
-                            SymbolizeCallback symbolize_callback) {
+void StackTrace::PrintStack(const uptr *addr, uptr size) {
   if (addr == 0 || size == 0) {
     Printf("    <empty stack>\n\n");
     return;
@@ -53,32 +52,20 @@ void StackTrace::PrintStack(const uptr *addr, uptr size,
     uptr pc = GetPreviousInstructionPc(addr[i]);
     uptr addr_frames_num = 0;  // The number of stack frames for current
                                // instruction address.
-    if (symbolize_callback) {
-      if (symbolize_callback((void*)pc, buff.data(), buff.size())) {
-        addr_frames_num = 1;
-        frame_desc.clear();
-        PrintStackFramePrefix(&frame_desc, frame_num, pc);
-        // We can't know anything about the string returned by external
-        // symbolizer, but if it starts with filename, try to strip path prefix
-        // from it.
-        frame_desc.append(
-            " %s",
-            StripPathPrefix(buff.data(), common_flags()->strip_path_prefix));
-        Printf("%s\n", frame_desc.data());
-        frame_num++;
-      }
-    }
     if (common_flags()->symbolize && addr_frames_num == 0) {
       // Use our own (online) symbolizer, if necessary.
       if (Symbolizer *sym = Symbolizer::GetOrNull())
         addr_frames_num =
-            sym->SymbolizeCode(pc, addr_frames.data(), addr_frames.size());
+            sym->SymbolizePC(pc, addr_frames.data(), addr_frames.size());
       for (uptr j = 0; j < addr_frames_num; j++) {
         AddressInfo &info = addr_frames[j];
         frame_desc.clear();
         PrintStackFramePrefix(&frame_desc, frame_num, pc);
         if (info.function) {
           frame_desc.append(" in %s", info.function);
+          // Print offset in function if we don't know the source file.
+          if (!info.file && info.function_offset != AddressInfo::kUnknown)
+            frame_desc.append("+0x%zx", info.function_offset);
         }
         if (info.file) {
           frame_desc.append(" ");

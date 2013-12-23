@@ -51,6 +51,8 @@ struct Flags {
   int max_leaks;
   // If nonzero kill the process with this exit code upon finding leaks.
   int exitcode;
+  // Print matched suppressions after leak checking.
+  bool print_suppressions;
   // Suppressions file name.
   const char* suppressions;
 
@@ -63,14 +65,13 @@ struct Flags {
   bool use_registers;
   // TLS and thread-specific storage.
   bool use_tls;
+  // Regions added via __lsan_register_root_region().
+  bool use_root_regions;
 
   // Consider unaligned pointers valid.
   bool use_unaligned;
   // Consider pointers found in poisoned memory to be valid.
   bool use_poisoned;
-
-  // User-visible verbosity.
-  int verbosity;
 
   // Debug logging.
   bool log_pointers;
