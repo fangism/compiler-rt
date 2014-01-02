@@ -763,8 +763,11 @@ namespace __sanitizer {
   unsigned IOCTL_TIOCSSERIAL = TIOCSSERIAL;
 #endif
 
-#if HAVE_EOWNERDEAD
+// EOWNERDEAD is not present in some older platforms.
+#if defined(EOWNERDEAD)
   extern const int errno_EOWNERDEAD = EOWNERDEAD;
+#else
+  extern const int errno_EOWNERDEAD = -1;
 #endif
 }  // namespace __sanitizer
 
