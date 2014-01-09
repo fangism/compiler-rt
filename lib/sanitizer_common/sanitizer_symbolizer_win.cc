@@ -74,9 +74,11 @@ class WinSymbolizer : public Symbolizer {
     return 1;
   }
 
-  bool IsAvailable() {
+  bool CanReturnFileLineInfo() {
     return true;
   }
+
+  // FIXME: Implement GetModuleNameAndOffsetForPC().
 
  private:
   // All DbgHelp functions are single threaded, so we should use a mutex to

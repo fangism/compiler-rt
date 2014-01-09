@@ -50,27 +50,31 @@ struct AsanMapUnmapCallback {
   }
 };
 
-#if SANITIZER_WORDSIZE == 64
-#if defined(__powerpc64__)
+#if SANITIZER_CAN_USE_ALLOCATOR64
+# if defined(__powerpc64__)
 const uptr kAllocatorSpace =  0xa0000000000ULL;
 const uptr kAllocatorSize  =  0x20000000000ULL;  // 2T.
-#else
+# else
 const uptr kAllocatorSpace = 0x600000000000ULL;
 const uptr kAllocatorSize  =  0x40000000000ULL;  // 4T.
-#endif
+# endif
 typedef DefaultSizeClassMap SizeClassMap;
 typedef SizeClassAllocator64<kAllocatorSpace, kAllocatorSize, 0 /*metadata*/,
     SizeClassMap, AsanMapUnmapCallback> PrimaryAllocator;
-#elif SANITIZER_WORDSIZE == 32
-static const u64 kAddressSpaceSize = 1ULL << 32;
-typedef CompactSizeClassMap SizeClassMap;
+#else  // Fallback to SizeClassAllocator32.
 static const uptr kRegionSizeLog = 20;
-static const uptr kFlatByteMapSize = kAddressSpaceSize >> kRegionSizeLog;
-typedef SizeClassAllocator32<0, kAddressSpaceSize, 16,
+static const uptr kNumRegions = SANITIZER_MMAP_RANGE_SIZE >> kRegionSizeLog;
+# if SANITIZER_WORDSIZE == 32
+typedef FlatByteMap<kNumRegions> ByteMap;
+# elif SANITIZER_WORDSIZE == 64
+typedef TwoLevelByteMap<(kNumRegions >> 12), 1 << 12> ByteMap;
+# endif
+typedef CompactSizeClassMap SizeClassMap;
+typedef SizeClassAllocator32<0, SANITIZER_MMAP_RANGE_SIZE, 16,
   SizeClassMap, kRegionSizeLog,
-  FlatByteMap<kFlatByteMapSize>,
+  ByteMap,
   AsanMapUnmapCallback> PrimaryAllocator;
-#endif
+#endif  // SANITIZER_CAN_USE_ALLOCATOR64
 
 typedef SizeClassAllocatorLocalCache<PrimaryAllocator> AllocatorCache;
 typedef LargeMmapAllocator<AsanMapUnmapCallback> SecondaryAllocator;
@@ -129,7 +133,8 @@ static uptr ComputeRZLog(uptr user_requested_size) {
     user_requested_size <= (1 << 14) - 256  ? 4 :
     user_requested_size <= (1 << 15) - 512  ? 5 :
     user_requested_size <= (1 << 16) - 1024 ? 6 : 7;
-  return Max(rz_log, RZSize2Log(flags()->redzone));
+  return Min(Max(rz_log, RZSize2Log(flags()->redzone)),
+             RZSize2Log(flags()->max_redzone));
 }
 
 // The memory chunk allocated from the underlying allocator looks like this:

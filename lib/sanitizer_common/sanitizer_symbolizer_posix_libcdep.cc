@@ -395,11 +395,10 @@ class POSIXSymbolizer : public Symbolizer {
     BlockingMutexLock l(&mu_);
     if (max_frames == 0)
       return 0;
-    LoadedModule *module = FindModuleForAddress(addr);
-    if (module == 0)
+    const char *module_name;
+    uptr module_offset;
+    if (!FindModuleNameAndOffsetForAddress(addr, &module_name, &module_offset))
       return 0;
-    const char *module_name = module->full_name();
-    uptr module_offset = addr - module->base_address();
     const char *str = SendCommand(false, module_name, module_offset);
     if (str == 0) {
       // External symbolizer was not initialized or failed. Fill only data
@@ -473,12 +472,14 @@ class POSIXSymbolizer : public Symbolizer {
     return true;
   }
 
-  bool IsAvailable() {
-    return internal_symbolizer_ != 0 || external_symbolizer_ != 0;
+  bool GetModuleNameAndOffsetForPC(uptr pc, const char **module_name,
+                                   uptr *module_address) {
+    BlockingMutexLock l(&mu_);
+    return FindModuleNameAndOffsetForAddress(pc, module_name, module_address);
   }
 
-  bool IsExternalAvailable() {
-    return external_symbolizer_ != 0;
+  bool CanReturnFileLineInfo() {
+    return internal_symbolizer_ != 0 || external_symbolizer_ != 0;
   }
 
   void Flush() {
@@ -535,8 +536,7 @@ class POSIXSymbolizer : public Symbolizer {
       CHECK(modules_);
       n_modules_ = GetListOfModules(modules_, kMaxNumberOfModuleContexts,
                                     /* filter */ 0);
-      // FIXME: Return this check when GetListOfModules is implemented on Mac.
-      // CHECK_GT(n_modules_, 0);
+      CHECK_GT(n_modules_, 0);
       CHECK_LT(n_modules_, kMaxNumberOfModuleContexts);
       modules_fresh_ = true;
       modules_were_reloaded = true;
@@ -555,6 +555,17 @@ class POSIXSymbolizer : public Symbolizer {
       return FindModuleForAddress(address);
     }
     return 0;
+  }
+
+  bool FindModuleNameAndOffsetForAddress(uptr address, const char **module_name,
+                                         uptr *module_offset) {
+    mu_.CheckLocked();
+    LoadedModule *module = FindModuleForAddress(address);
+    if (module == 0)
+      return false;
+    *module_name = module->full_name();
+    *module_offset = address - module->base_address();
+    return true;
   }
 
   // 16K loaded modules should be enough for everyone.

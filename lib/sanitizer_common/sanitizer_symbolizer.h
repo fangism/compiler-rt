@@ -95,10 +95,11 @@ class Symbolizer {
   virtual bool SymbolizeData(uptr address, DataInfo *info) {
     return false;
   }
-  virtual bool IsAvailable() {
+  virtual bool GetModuleNameAndOffsetForPC(uptr pc, const char **module_name,
+                                           uptr *module_address) {
     return false;
   }
-  virtual bool IsExternalAvailable() {
+  virtual bool CanReturnFileLineInfo() {
     return false;
   }
   // Release internal caches (if any).
