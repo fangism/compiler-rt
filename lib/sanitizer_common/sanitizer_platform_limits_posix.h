@@ -270,6 +270,8 @@ namespace __sanitizer {
   struct __sanitizer_dirent {
 #if is_powerpc
     unsigned int d_ino;			// darwin8
+#elif !defined(__x86_64__)
+    unsigned int d_ino;			// i386-darwin10
 #else
     unsigned long long d_ino;
 #endif

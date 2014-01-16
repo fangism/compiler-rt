@@ -2184,7 +2184,7 @@ INTERCEPTOR(int, pthread_mutex_lock, void *m) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, pthread_mutex_lock, m);
   int res = REAL(pthread_mutex_lock)(m);
-#if HAVE_EOWNERDEAD
+#if defined(EOWNERDEAD)
   if (res == errno_EOWNERDEAD)
     COMMON_INTERCEPTOR_MUTEX_REPAIR(ctx, m);
   if (res == 0 || res == errno_EOWNERDEAD)
