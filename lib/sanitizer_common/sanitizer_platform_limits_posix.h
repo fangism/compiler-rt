@@ -19,7 +19,9 @@
 #include "sanitizer_platform.h"
 
 // maybe this conditional should be darwin8 or 9 (pre-10)
-#define is_powerpc	(defined(__ppc__) || defined(__powerpc__) || defined(__POWERPC__))
+#if	SANITIZER_MAC
+#include <sys/cdefs.h>	// just for __DARWIN_64_BIT_INO_T
+#endif
 
 // just doesn't exist on darwin8 -- should be auto-detected
 #define	HAVE_STRUCT_STATFS64			0
@@ -268,15 +270,11 @@ namespace __sanitizer {
 
 #if SANITIZER_MAC
   struct __sanitizer_dirent {
-#if is_powerpc
-    unsigned int d_ino;			// darwin8
-#elif !defined(__x86_64__)
-    unsigned int d_ino;			// i386-darwin10
-#else
+#if defined(__DARWIN_64_BIT_INO_T) && __DARWIN_64_BIT_INO_T
     unsigned long long d_ino;
-#endif
-#if !is_powerpc
     unsigned long long d_seekoff;		// not in darwin8
+#else
+    unsigned int d_ino;			// powerpc-darwin8, i386-darwin10
 #endif
     unsigned short d_reclen;
     // more fields that we don't care about

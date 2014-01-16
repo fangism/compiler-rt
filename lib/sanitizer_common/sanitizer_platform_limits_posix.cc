@@ -839,7 +839,8 @@ CHECK_SIZE_AND_OFFSET(cmsghdr, cmsg_type);
 COMPILER_CHECK(sizeof(__sanitizer_dirent) <= sizeof(dirent));
 CHECK_SIZE_AND_OFFSET(dirent, d_ino);
 #if SANITIZER_MAC
-#if !is_powerpc
+// macro defined in <sys/dirent.h> on darwin10
+#if defined(__DARWIN_64_BIT_INO_T) && __DARWIN_64_BIT_INO_T
 CHECK_SIZE_AND_OFFSET(dirent, d_seekoff);
 #endif
 #else
