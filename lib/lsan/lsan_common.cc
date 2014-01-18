@@ -424,7 +424,7 @@ void DoLeakCheck() {
   if (already_done) return;
   already_done = true;
   if (&__lsan_is_turned_off && __lsan_is_turned_off())
-    return;
+      return;
 
   DoLeakCheckParam param;
   param.success = false;

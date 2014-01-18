@@ -2,6 +2,7 @@
 
 set(ASAN_SOURCES
   asan_allocator2.cc
+  asan_activation.cc
   asan_fake_stack.cc
   asan_globals.cc
   asan_interceptors.cc
@@ -38,16 +39,13 @@ set(ASAN_COMMON_DEFINITIONS
 
 if(ANDROID)
   list(APPEND ASAN_COMMON_DEFINITIONS
-    ASAN_FLEXIBLE_MAPPING_AND_OFFSET=0
     ASAN_NEEDS_SEGV=0
     ASAN_LOW_MEMORY=1)
 elseif(MSVC)
   list(APPEND ASAN_COMMON_DEFINITIONS
-    ASAN_FLEXIBLE_MAPPING_AND_OFFSET=0
     ASAN_NEEDS_SEGV=0)
 else()
   list(APPEND ASAN_COMMON_DEFINITIONS
-    ASAN_FLEXIBLE_MAPPING_AND_OFFSET=1
     ASAN_NEEDS_SEGV=1)
 endif()
 
