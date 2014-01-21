@@ -40,11 +40,10 @@
 #include <libkern/OSAtomic.h>
 #endif
 
-#ifdef	__APPLE__
-// #define	MAC_OS_X_VERSION_SELECTED		MAC_OS_X_VERSION_MIN_REQUIRED
-#define	MAC_OS_X_VERSION_SELECTED		MAC_OS_X_VERSION_MAX_ALLOWED
-#define	__DARWIN_VERSION__	((MAC_OS_X_VERSION_SELECTED - MAC_OS_X_VERSION_10_0)/10 +4)
-#else
+// The following macros are provided by sanitizer_platform_limits_posix.h
+// MAC_OS_X_VERSION_SELECTED
+// __DARWIN_VERSION__
+#ifndef	__DARWIN_VERSION__
 #define	__DARWIN_VERSION__	0
 #endif
 

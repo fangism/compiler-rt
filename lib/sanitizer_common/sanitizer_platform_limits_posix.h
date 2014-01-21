@@ -21,11 +21,30 @@
 // maybe this conditional should be darwin8 or 9 (pre-10)
 #if	SANITIZER_MAC
 #include <sys/cdefs.h>	// just for __DARWIN_64_BIT_INO_T
+
+// version macros don't get defined for ppc64
+#ifndef	MAC_OS_X_VERSION_10_0
+#define	MAC_OS_X_VERSION_10_0	1000
 #endif
 
-// just doesn't exist on darwin8 -- should be auto-detected
-#define	HAVE_STRUCT_STATFS64			0
+#ifdef	MAC_OS_X_VERSION_MAX_ALLOWED
+#define	MAC_OS_X_VERSION_SELECTED		MAC_OS_X_VERSION_MAX_ALLOWED
+#elif	defined(MAC_OS_X_VERSION_MIN_REQUIRED)
+#define	MAC_OS_X_VERSION_SELECTED		MAC_OS_X_VERSION_MIN_REQUIRED
+#elif	defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__)
+#define	MAC_OS_X_VERSION_SELECTED	__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__
+#else
+// default: 10.4
+#define	MAC_OS_X_VERSION_SELECTED	1040
+#endif
+
+#define	__DARWIN_VERSION__	((MAC_OS_X_VERSION_SELECTED - MAC_OS_X_VERSION_10_0)/10 +4)
+#endif
+
+// <sys/mount.h> -- detect __DARWIN_64_BIT_INO_T macro?
+#define	HAVE_STRUCT_STATFS64			(__DARWIN_VERSION__ > 8)
 // EOWNERDEAD appears in darwin11 <errno.h>
+#define	HAVE_EOWNERDEAD				(__DARWIN_VERSION__ > 10)
 
 namespace __sanitizer {
   extern unsigned struct_utsname_sz;
@@ -491,22 +510,25 @@ namespace __sanitizer {
   extern int shmctl_shm_stat;
 #endif
 
+#if SANITIZER_MAC && (__DARWIN_VERSION__ > 8)
+// not on darwin8 <net/if.h>
+#pragma pack(4)
+#endif
   // ioctl arguments
   struct __sanitizer_ifconf {
     int ifc_len;
     union {
-// on darwin8, <net/if.h> also has:
+#if SANITIZER_MAC
+// on darwin8,9,10,11, <net/if.h> also has:
 //    caddr_t ifcu_buf;		// typedef char* caddr_t; // <sys/types.h>
+      char *ifcu_buf;
+#endif
 //    struct  ifreq *ifcu_req;
       void *ifcu_req;
     } ifc_ifcu;
-#if SANITIZER_MAC && !(defined(__ppc__) || defined(__powerpc__) || defined(__POWERPC__))
-// not on darwin8 <net/if.h>
-// kludge: use system gcc version to infer darwin version
-// but also don't want stage-2 to apply attribute either
-  } __attribute__((packed));
-#else
   };
+#if SANITIZER_MAC && (__DARWIN_VERSION__ > 8)
+#pragma pack()
 #endif
 
 #define IOC_SIZE(nr) (((nr) >> 16) & 0x3fff)
