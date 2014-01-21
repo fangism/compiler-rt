@@ -200,8 +200,9 @@ if(APPLE)
   if(COMPILER_RT_USES_LIBCXX)
     set(SANITIZER_MIN_OSX_VERSION 10.7)
   else()
-# darwin9 users will want 10.5, of course
-    set(SANITIZER_MIN_OSX_VERSION 10.4)
+# set target evrsion = host version for now (may be cache-overridden)
+# this works when SDKROOT is blank
+    set(SANITIZER_MIN_OSX_VERSION ${LLVM_HOST_OSX_VERSION})
   endif()
   set(DARWIN_osx_CFLAGS -mmacosx-version-min=${SANITIZER_MIN_OSX_VERSION})
 #  set(DARWIN_iossim_CFLAGS 
