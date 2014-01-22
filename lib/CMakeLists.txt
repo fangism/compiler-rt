@@ -208,7 +208,6 @@ set(ppc_SOURCES
 	ppc/multc3.c
 	ppc/restFP.S
 	ppc/saveFP.S
-	ppc/cache_flush.S
 	${GENERIC_SOURCES})
 
 if (NOT WIN32)
