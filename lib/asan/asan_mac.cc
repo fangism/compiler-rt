@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "sanitizer_common/sanitizer_platform.h"
+#include "sanitizer_common/sanitizer_platform_limits_posix.h" // for version info
 #if SANITIZER_MAC
 
 #include "asan_interceptors.h"
