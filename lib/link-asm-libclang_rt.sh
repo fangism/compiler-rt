@@ -4,8 +4,7 @@
 # usage: define the following variables and source this script, call function
 
 # variables needed by the following function
-# CPP=preprocessor (gcc -E)
-# as=assembler
+# CC= compiler that will invoke assembler
 # arch={ppc,i386,...}
 # builddir=.../projects/compiler-rt/lib (relative to where function is called)
 # crtsrcdir=.../compiler-rt.git (absolute path)
@@ -14,11 +13,12 @@
 
 assemble_clang_rt() {
 pushd $builddir
+mkdir -p $objdir
 for f in $crtsrcdir/lib/$arch/*.S
 do      
         b=`basename $f`
 	echo "Assembling $arch/$b."
-        $CPP $AS_CPPFLAGS $f | $as -arch $arch -o $objdir/$b.o
+        $CC -arch $arch -c $f -o $objdir/$b.o
 done
 echo "Updating static library $libcrt."
 ar cru $libcrt $objdir/*.S.o
