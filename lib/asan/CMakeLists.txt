@@ -39,14 +39,7 @@ set(ASAN_COMMON_DEFINITIONS
 
 if(ANDROID)
   list(APPEND ASAN_COMMON_DEFINITIONS
-    ASAN_NEEDS_SEGV=0
     ASAN_LOW_MEMORY=1)
-elseif(MSVC)
-  list(APPEND ASAN_COMMON_DEFINITIONS
-    ASAN_NEEDS_SEGV=0)
-else()
-  list(APPEND ASAN_COMMON_DEFINITIONS
-    ASAN_NEEDS_SEGV=1)
 endif()
 
 # Architectures supported by ASan.
@@ -104,7 +97,7 @@ elseif(ANDROID)
     ${ASAN_CFLAGS})
   set_property(TARGET clang_rt.asan-arm-android APPEND PROPERTY
     COMPILE_DEFINITIONS ${ASAN_COMMON_DEFINITIONS})
-  target_link_libraries(clang_rt.asan-arm-android dl)
+  target_link_libraries(clang_rt.asan-arm-android dl log)
   list(APPEND ASAN_RUNTIME_LIBRARIES clang_rt.asan-arm-android)
 else()
   # Build separate libraries for each target.

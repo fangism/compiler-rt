@@ -91,68 +91,77 @@ class Decorator: private __sanitizer::AnsiColorDecorator {
 
 // ---------------------- Helper functions ----------------------- {{{1
 
-static void PrintShadowByte(const char *before, u8 byte,
-                            const char *after = "\n") {
+static void PrintShadowByte(InternalScopedString *str, const char *before,
+                            u8 byte, const char *after = "\n") {
   Decorator d;
-  Printf("%s%s%x%x%s%s", before,
-         d.ShadowByte(byte), byte >> 4, byte & 15, d.EndShadowByte(), after);
+  str->append("%s%s%x%x%s%s", before, d.ShadowByte(byte), byte >> 4, byte & 15,
+              d.EndShadowByte(), after);
 }
 
-static void PrintShadowBytes(const char *before, u8 *bytes,
-                             u8 *guilty, uptr n) {
+static void PrintShadowBytes(InternalScopedString *str, const char *before,
+                             u8 *bytes, u8 *guilty, uptr n) {
   Decorator d;
-  if (before)
-    Printf("%s%p:", before, bytes);
+  if (before) str->append("%s%p:", before, bytes);
   for (uptr i = 0; i < n; i++) {
     u8 *p = bytes + i;
-    const char *before = p == guilty ? "[" :
-        (p - 1 == guilty && i != 0) ? "" : " ";
+    const char *before =
+        p == guilty ? "[" : (p - 1 == guilty && i != 0) ? "" : " ";
     const char *after = p == guilty ? "]" : "";
-    PrintShadowByte(before, *p, after);
+    PrintShadowByte(str, before, *p, after);
   }
-  Printf("\n");
+  str->append("\n");
 }
 
-static void PrintLegend() {
-  Printf("Shadow byte legend (one shadow byte represents %d "
-         "application bytes):\n", (int)SHADOW_GRANULARITY);
-  PrintShadowByte("  Addressable:           ", 0);
-  Printf("  Partially addressable: ");
-  for (u8 i = 1; i < SHADOW_GRANULARITY; i++)
-    PrintShadowByte("", i, " ");
-  Printf("\n");
-  PrintShadowByte("  Heap left redzone:       ", kAsanHeapLeftRedzoneMagic);
-  PrintShadowByte("  Heap right redzone:      ", kAsanHeapRightRedzoneMagic);
-  PrintShadowByte("  Freed heap region:       ", kAsanHeapFreeMagic);
-  PrintShadowByte("  Stack left redzone:      ", kAsanStackLeftRedzoneMagic);
-  PrintShadowByte("  Stack mid redzone:       ", kAsanStackMidRedzoneMagic);
-  PrintShadowByte("  Stack right redzone:     ", kAsanStackRightRedzoneMagic);
-  PrintShadowByte("  Stack partial redzone:   ", kAsanStackPartialRedzoneMagic);
-  PrintShadowByte("  Stack after return:      ", kAsanStackAfterReturnMagic);
-  PrintShadowByte("  Stack use after scope:   ", kAsanStackUseAfterScopeMagic);
-  PrintShadowByte("  Global redzone:          ", kAsanGlobalRedzoneMagic);
-  PrintShadowByte("  Global init order:       ", kAsanInitializationOrderMagic);
-  PrintShadowByte("  Poisoned by user:        ", kAsanUserPoisonedMemoryMagic);
-  PrintShadowByte("  Contiguous container OOB:",
+static void PrintLegend(InternalScopedString *str) {
+  str->append(
+      "Shadow byte legend (one shadow byte represents %d "
+      "application bytes):\n",
+      (int)SHADOW_GRANULARITY);
+  PrintShadowByte(str, "  Addressable:           ", 0);
+  str->append("  Partially addressable: ");
+  for (u8 i = 1; i < SHADOW_GRANULARITY; i++) PrintShadowByte(str, "", i, " ");
+  str->append("\n");
+  PrintShadowByte(str, "  Heap left redzone:       ",
+                  kAsanHeapLeftRedzoneMagic);
+  PrintShadowByte(str, "  Heap right redzone:      ",
+                  kAsanHeapRightRedzoneMagic);
+  PrintShadowByte(str, "  Freed heap region:       ", kAsanHeapFreeMagic);
+  PrintShadowByte(str, "  Stack left redzone:      ",
+                  kAsanStackLeftRedzoneMagic);
+  PrintShadowByte(str, "  Stack mid redzone:       ",
+                  kAsanStackMidRedzoneMagic);
+  PrintShadowByte(str, "  Stack right redzone:     ",
+                  kAsanStackRightRedzoneMagic);
+  PrintShadowByte(str, "  Stack partial redzone:   ",
+                  kAsanStackPartialRedzoneMagic);
+  PrintShadowByte(str, "  Stack after return:      ",
+                  kAsanStackAfterReturnMagic);
+  PrintShadowByte(str, "  Stack use after scope:   ",
+                  kAsanStackUseAfterScopeMagic);
+  PrintShadowByte(str, "  Global redzone:          ", kAsanGlobalRedzoneMagic);
+  PrintShadowByte(str, "  Global init order:       ",
+                  kAsanInitializationOrderMagic);
+  PrintShadowByte(str, "  Poisoned by user:        ",
+                  kAsanUserPoisonedMemoryMagic);
+  PrintShadowByte(str, "  Contiguous container OOB:",
                   kAsanContiguousContainerOOBMagic);
-  PrintShadowByte("  ASan internal:           ", kAsanInternalHeapMagic);
+  PrintShadowByte(str, "  ASan internal:           ", kAsanInternalHeapMagic);
 }
 
 static void PrintShadowMemoryForAddress(uptr addr) {
-  if (!AddrIsInMem(addr))
-    return;
+  if (!AddrIsInMem(addr)) return;
   uptr shadow_addr = MemToShadow(addr);
   const uptr n_bytes_per_row = 16;
   uptr aligned_shadow = shadow_addr & ~(n_bytes_per_row - 1);
-  Printf("Shadow bytes around the buggy address:\n");
+  InternalScopedString str(4096);
+  str.append("Shadow bytes around the buggy address:\n");
   for (int i = -5; i <= 5; i++) {
     const char *prefix = (i == 0) ? "=>" : "  ";
-    PrintShadowBytes(prefix,
-                     (u8*)(aligned_shadow + i * n_bytes_per_row),
-                     (u8*)shadow_addr, n_bytes_per_row);
+    PrintShadowBytes(&str, prefix, (u8 *)(aligned_shadow + i * n_bytes_per_row),
+                     (u8 *)shadow_addr, n_bytes_per_row);
   }
-  if (flags()->print_legend)
-    PrintLegend();
+  if (flags()->print_legend) PrintLegend(&str);
+  Printf("%s", str.data());
 }
 
 static void PrintZoneForPointer(uptr ptr, uptr zone_ptr,
@@ -190,14 +199,15 @@ static const char *MaybeDemangleGlobalName(const char *name) {
 }
 
 // Check if the global is a zero-terminated ASCII string. If so, print it.
-static void PrintGlobalNameIfASCII(const __asan_global &g) {
+static void PrintGlobalNameIfASCII(InternalScopedString *str,
+                                   const __asan_global &g) {
   for (uptr p = g.beg; p < g.beg + g.size - 1; p++) {
     unsigned char c = *(unsigned char*)p;
     if (c == '\0' || !IsASCII(c)) return;
   }
   if (*(char*)(g.beg + g.size - 1) != '\0') return;
-  Printf("  '%s' is ascii string '%s'\n",
-         MaybeDemangleGlobalName(g.name), (char*)g.beg);
+  str->append("  '%s' is ascii string '%s'\n", MaybeDemangleGlobalName(g.name),
+              (char *)g.beg);
 }
 
 bool DescribeAddressRelativeToGlobal(uptr addr, uptr size,
@@ -205,23 +215,26 @@ bool DescribeAddressRelativeToGlobal(uptr addr, uptr size,
   static const uptr kMinimalDistanceFromAnotherGlobal = 64;
   if (addr <= g.beg - kMinimalDistanceFromAnotherGlobal) return false;
   if (addr >= g.beg + g.size_with_redzone) return false;
+  InternalScopedString str(4096);
   Decorator d;
-  Printf("%s", d.Location());
+  str.append("%s", d.Location());
   if (addr < g.beg) {
-    Printf("%p is located %zd bytes to the left", (void*)addr, g.beg - addr);
+    str.append("%p is located %zd bytes to the left", (void *)addr,
+               g.beg - addr);
   } else if (addr + size > g.beg + g.size) {
     if (addr < g.beg + g.size)
       addr = g.beg + g.size;
-    Printf("%p is located %zd bytes to the right", (void*)addr,
-           addr - (g.beg + g.size));
+    str.append("%p is located %zd bytes to the right", (void *)addr,
+               addr - (g.beg + g.size));
   } else {
     // Can it happen?
-    Printf("%p is located %zd bytes inside", (void*)addr, addr - g.beg);
+    str.append("%p is located %zd bytes inside", (void *)addr, addr - g.beg);
   }
-  Printf(" of global variable '%s' from '%s' (0x%zx) of size %zu\n",
+  str.append(" of global variable '%s' from '%s' (0x%zx) of size %zu\n",
              MaybeDemangleGlobalName(g.name), g.module_name, g.beg, g.size);
-  Printf("%s", d.EndLocation());
-  PrintGlobalNameIfASCII(g);
+  str.append("%s", d.EndLocation());
+  PrintGlobalNameIfASCII(&str, g);
+  Printf("%s", str.data());
   return true;
 }
 
@@ -290,16 +303,18 @@ void PrintAccessAndVarIntersection(const char *var_name,
              addr - prev_var_end >= var_beg - addr_end)
       pos_descr = "underflows";
   }
-  Printf("    [%zd, %zd) '%s'", var_beg, var_beg + var_size, var_name);
+  InternalScopedString str(1024);
+  str.append("    [%zd, %zd) '%s'", var_beg, var_beg + var_size, var_name);
   if (pos_descr) {
     Decorator d;
     // FIXME: we may want to also print the size of the access here,
     // but in case of accesses generated by memset it may be confusing.
-    Printf("%s <== Memory access at offset %zd %s this variable%s\n",
-           d.Location(), addr, pos_descr, d.EndLocation());
+    str.append("%s <== Memory access at offset %zd %s this variable%s\n",
+               d.Location(), addr, pos_descr, d.EndLocation());
   } else {
-    Printf("\n");
+    str.append("\n");
   }
+  Printf("%s", str.data());
 }
 
 struct StackVarDescr {
@@ -396,24 +411,26 @@ static void DescribeAccessToHeapChunk(AsanChunkView chunk, uptr addr,
                                       uptr access_size) {
   sptr offset;
   Decorator d;
-  Printf("%s", d.Location());
+  InternalScopedString str(4096);
+  str.append("%s", d.Location());
   if (chunk.AddrIsAtLeft(addr, access_size, &offset)) {
-    Printf("%p is located %zd bytes to the left of", (void*)addr, offset);
+    str.append("%p is located %zd bytes to the left of", (void *)addr, offset);
   } else if (chunk.AddrIsAtRight(addr, access_size, &offset)) {
     if (offset < 0) {
       addr -= offset;
       offset = 0;
     }
-    Printf("%p is located %zd bytes to the right of", (void*)addr, offset);
+    str.append("%p is located %zd bytes to the right of", (void *)addr, offset);
   } else if (chunk.AddrIsInside(addr, access_size, &offset)) {
-    Printf("%p is located %zd bytes inside of", (void*)addr, offset);
+    str.append("%p is located %zd bytes inside of", (void*)addr, offset);
   } else {
-    Printf("%p is located somewhere around (this is AddressSanitizer bug!)",
-           (void*)addr);
+    str.append("%p is located somewhere around (this is AddressSanitizer bug!)",
+               (void *)addr);
   }
-  Printf(" %zu-byte region [%p,%p)\n", chunk.UsedSize(),
-         (void*)(chunk.Beg()), (void*)(chunk.End()));
-  Printf("%s", d.EndLocation());
+  str.append(" %zu-byte region [%p,%p)\n", chunk.UsedSize(),
+             (void *)(chunk.Beg()), (void *)(chunk.End()));
+  str.append("%s", d.EndLocation());
+  Printf("%s", str.data());
 }
 
 void DescribeHeapAddress(uptr addr, uptr access_size) {
@@ -483,12 +500,13 @@ void DescribeThread(AsanThreadContext *context) {
   }
   context->announced = true;
   char tname[128];
-  Printf("Thread T%d%s", context->tid,
-         ThreadNameWithParenthesis(context->tid, tname, sizeof(tname)));
-  Printf(" created by T%d%s here:\n",
-         context->parent_tid,
-         ThreadNameWithParenthesis(context->parent_tid,
-                                   tname, sizeof(tname)));
+  InternalScopedString str(1024);
+  str.append("Thread T%d%s", context->tid,
+             ThreadNameWithParenthesis(context->tid, tname, sizeof(tname)));
+  str.append(
+      " created by T%d%s here:\n", context->parent_tid,
+      ThreadNameWithParenthesis(context->parent_tid, tname, sizeof(tname)));
+  Printf("%s", str.data());
   uptr stack_size;
   const uptr *stack_trace = StackDepotGet(context->stack_id, &stack_size);
   StackTrace::PrintStack(stack_trace, stack_size);

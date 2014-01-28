@@ -536,6 +536,8 @@ namespace __sanitizer {
   extern int shmctl_shm_stat;
 #endif
 
+  extern int map_fixed;
+
 #if SANITIZER_MAC && (__DARWIN_VERSION__ > 8)
 // not on darwin8 <net/if.h>
 #pragma pack(4)

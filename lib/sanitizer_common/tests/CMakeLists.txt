@@ -5,6 +5,7 @@ set(SANITIZER_UNITTESTS
   sanitizer_atomic_test.cc
   sanitizer_common_test.cc
   sanitizer_flags_test.cc
+  sanitizer_format_interceptor_test.cc
   sanitizer_ioctl_test.cc
   sanitizer_libc_test.cc
   sanitizer_linux_test.cc
@@ -14,7 +15,6 @@ set(SANITIZER_UNITTESTS
   sanitizer_posix_test.cc
   sanitizer_printf_test.cc
   sanitizer_procmaps_test.cc
-  sanitizer_scanf_interceptor_test.cc
   sanitizer_stackdepot_test.cc
   sanitizer_stacktrace_test.cc
   sanitizer_stoptheworld_test.cc
@@ -165,6 +165,7 @@ if(ANDROID)
   set_target_properties(SanitizerTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   set_target_link_flags(SanitizerTest ${SANITIZER_TEST_LINK_FLAGS_COMMON})
+  target_link_libraries(SanitizerTest log)
   # Add unit test to test suite.
   add_dependencies(SanitizerUnitTests SanitizerTest)
 endif()

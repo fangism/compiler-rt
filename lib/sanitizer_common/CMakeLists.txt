@@ -46,7 +46,7 @@ set(SANITIZER_HEADERS
   sanitizer_common.h
   sanitizer_common_interceptors.inc
   sanitizer_common_interceptors_ioctl.inc
-  sanitizer_common_interceptors_scanf.inc
+  sanitizer_common_interceptors_format.inc
   sanitizer_common_syscalls.inc
   sanitizer_flags.h
   sanitizer_internal_defs.h
@@ -73,6 +73,19 @@ set(SANITIZER_HEADERS
   sanitizer_syscall_linux_x86_64.inc
   sanitizer_thread_registry.h)
 
+set(SANITIZER_COMMON_DEFINITIONS)
+
+if(ANDROID)
+  list(APPEND SANITIZER_COMMON_DEFINITIONS
+    SANITIZER_NEEDS_SEGV=0)
+elseif(MSVC)
+  list(APPEND SANITIZER_COMMON_DEFINITIONS
+    SANITIZER_NEEDS_SEGV=0)
+else()
+  list(APPEND SANITIZER_COMMON_DEFINITIONS
+    SANITIZER_NEEDS_SEGV=1)
+endif()
+
 if (NOT MSVC)
   set(SANITIZER_CFLAGS
     ${SANITIZER_COMMON_CFLAGS}
@@ -94,7 +107,8 @@ if(APPLE)
     add_compiler_rt_darwin_object_library(RTSanitizerCommon ${os}
       ARCH ${SANITIZER_COMMON_SUPPORTED_ARCH}
       SOURCES ${SANITIZER_SOURCES} ${SANITIZER_LIBCDEP_SOURCES}
-      CFLAGS ${SANITIZER_CFLAGS})
+      CFLAGS ${SANITIZER_CFLAGS}
+      DEFS ${SANITIZER_COMMON_DEFINITIONS})
     list(APPEND SANITIZER_RUNTIME_LIBRARIES RTSanitizerCommon.${os})
   endforeach()
 elseif(ANDROID)
@@ -102,18 +116,23 @@ elseif(ANDROID)
     ${SANITIZER_SOURCES} ${SANITIZER_LIBCDEP_SOURCES})
   set_target_compile_flags(RTSanitizerCommon.arm.android
     ${SANITIZER_CFLAGS})
+  set_property(TARGET RTSanitizerCommon.arm.android APPEND PROPERTY
+    COMPILE_DEFINITIONS ${SANITIZER_COMMON_DEFINITIONS})
   list(APPEND SANITIZER_RUNTIME_LIBRARIES RTSanitizerCommon.arm.android)
 else()
   # Otherwise, build separate libraries for each target.
   foreach(arch ${SANITIZER_COMMON_SUPPORTED_ARCH})
     add_compiler_rt_object_library(RTSanitizerCommon ${arch}
-      SOURCES ${SANITIZER_SOURCES} CFLAGS ${SANITIZER_CFLAGS})
+      SOURCES ${SANITIZER_SOURCES} CFLAGS ${SANITIZER_CFLAGS}
+      DEFS ${SANITIZER_COMMON_DEFINITIONS})
     add_compiler_rt_object_library(RTSanitizerCommonLibc ${arch}
-      SOURCES ${SANITIZER_LIBCDEP_SOURCES} CFLAGS ${SANITIZER_CFLAGS})
+      SOURCES ${SANITIZER_LIBCDEP_SOURCES} CFLAGS ${SANITIZER_CFLAGS}
+      DEFS ${SANITIZER_COMMON_DEFINITIONS})
     add_compiler_rt_static_runtime(clang_rt.san-${arch} ${arch}
       SOURCES $<TARGET_OBJECTS:RTSanitizerCommon.${arch}>
               $<TARGET_OBJECTS:RTSanitizerCommonLibc.${arch}>
-      CFLAGS ${SANITIZER_CFLAGS})
+      CFLAGS ${SANITIZER_CFLAGS}
+      DEFS ${SANITIZER_COMMON_DEFINITIONS})
     list(APPEND SANITIZER_RUNTIME_LIBRARIES RTSanitizerCommon.${arch}
                                             RTSanitizerCommonLibc.${arch})
   endforeach()

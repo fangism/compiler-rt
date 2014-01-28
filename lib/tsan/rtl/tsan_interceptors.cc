@@ -186,15 +186,13 @@ ScopedInterceptor::~ScopedInterceptor() {
     ThreadIgnoreEnd(thr_, pc_);
   }
   if (!thr_->ignore_interceptors) {
-    FuncExit(thr_);
     ProcessPendingSignals(thr_);
+    FuncExit(thr_);
   }
 }
 
 #define SCOPED_INTERCEPTOR_RAW(func, ...) \
     ThreadState *thr = cur_thread(); \
-    StatInc(thr, StatInterceptor); \
-    StatInc(thr, StatInt_##func); \
     const uptr caller_pc = GET_CALLER_PC(); \
     ScopedInterceptor si(thr, #func, caller_pc); \
     const uptr pc = __sanitizer::StackTrace::GetCurrentPc(); \
@@ -863,6 +861,17 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
 TSAN_INTERCEPTOR(int, pthread_create,
     void *th, void *attr, void *(*callback)(void*), void * param) {
   SCOPED_INTERCEPTOR_RAW(pthread_create, th, attr, callback, param);
+  if (CTX()->after_multithreaded_fork) {
+    if (flags()->die_after_fork) {
+      Printf("ThreadSanitizer: starting new threads after muti-threaded"
+          " fork is not supported. Dying (set die_after_fork=0 to override)\n");
+      Die();
+    } else {
+      VPrintf(1, "ThreadSanitizer: starting new threads after muti-threaded"
+          " fork is not supported. Continuing because die_after_fork=0,"
+          " but you are on your own\n");
+    }
+  }
   __sanitizer_pthread_attr_t myattr;
   if (attr == 0) {
     pthread_attr_init(&myattr);
@@ -1617,25 +1626,94 @@ TSAN_INTERCEPTOR(int, epoll_wait, int epfd, void *ev, int cnt, int timeout) {
   return res;
 }
 
+namespace __tsan {
+
+static void CallUserSignalHandler(ThreadState *thr, bool sync, bool sigact,
+    int sig, my_siginfo_t *info, void *uctx) {
+  // Ensure that the handler does not spoil errno.
+  const int saved_errno = errno;
+  errno = 99;
+  // Need to remember pc before the call, because the handler can reset it.
+  uptr pc = sigact ?
+     (uptr)sigactions[sig].sa_sigaction :
+     (uptr)sigactions[sig].sa_handler;
+  pc += 1;  // return address is expected, OutputReport() will undo this
+  if (sigact)
+    sigactions[sig].sa_sigaction(sig, info, uctx);
+  else
+    sigactions[sig].sa_handler(sig);
+  if (flags()->report_bugs && !sync && errno != 99) {
+    Context *ctx = CTX();
+    __tsan::StackTrace stack;
+    stack.ObtainCurrent(thr, pc);
+    ThreadRegistryLock l(ctx->thread_registry);
+    ScopedReport rep(ReportTypeErrnoInSignal);
+    if (!IsFiredSuppression(ctx, rep, stack)) {
+      rep.AddStack(&stack);
+      OutputReport(ctx, rep, rep.GetReport()->stacks[0]);
+    }
+  }
+  errno = saved_errno;
+}
+
+void ProcessPendingSignals(ThreadState *thr) {
+  SignalContext *sctx = SigCtx(thr);
+  if (sctx == 0 || sctx->pending_signal_count == 0 || thr->in_signal_handler)
+    return;
+  thr->in_signal_handler = true;
+  sctx->pending_signal_count = 0;
+  // These are too big for stack.
+  static THREADLOCAL __sanitizer_sigset_t emptyset, oldset;
+  REAL(sigfillset)(&emptyset);
+  pthread_sigmask(SIG_SETMASK, &emptyset, &oldset);
+  for (int sig = 0; sig < kSigCount; sig++) {
+    SignalDesc *signal = &sctx->pending_signals[sig];
+    if (signal->armed) {
+      signal->armed = false;
+      if (sigactions[sig].sa_handler != SIG_DFL
+          && sigactions[sig].sa_handler != SIG_IGN) {
+        CallUserSignalHandler(thr, false, signal->sigaction,
+            sig, &signal->siginfo, &signal->ctx);
+      }
+    }
+  }
+  pthread_sigmask(SIG_SETMASK, &oldset, 0);
+  CHECK_EQ(thr->in_signal_handler, true);
+  thr->in_signal_handler = false;
+}
+
+}  // namespace __tsan
+
+static bool is_sync_signal(SignalContext *sctx, int sig) {
+  return sig == SIGSEGV || sig == SIGBUS || sig == SIGILL ||
+      sig == SIGABRT || sig == SIGFPE || sig == SIGPIPE || sig == SIGSYS ||
+      // If we are sending signal to ourselves, we must process it now.
+      (sctx && sig == sctx->int_signal_send);
+}
+
 void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
     my_siginfo_t *info, void *ctx) {
   ThreadState *thr = cur_thread();
   SignalContext *sctx = SigCtx(thr);
   // Don't mess with synchronous signals.
-  if (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL ||
-      sig == SIGABRT || sig == SIGFPE || sig == SIGPIPE || sig == SIGSYS ||
-      // If we are sending signal to ourselves, we must process it now.
-      (sctx && sig == sctx->int_signal_send) ||
+  const bool sync = is_sync_signal(sctx, sig);
+  if (sync ||
       // If we are in blocking function, we can safely process it now
       // (but check if we are in a recursive interceptor,
       // i.e. pthread_join()->munmap()).
       (sctx && sctx->in_blocking_func == 1)) {
     CHECK_EQ(thr->in_signal_handler, false);
     thr->in_signal_handler = true;
-    if (sigact)
-      sigactions[sig].sa_sigaction(sig, info, ctx);
-    else
-      sigactions[sig].sa_handler(sig);
+    if (sctx && sctx->in_blocking_func == 1) {
+      // We ignore interceptors in blocking functions,
+      // temporary enbled them again while we are calling user function.
+      int const i = thr->ignore_interceptors;
+      thr->ignore_interceptors = 0;
+      CallUserSignalHandler(thr, sync, sigact, sig, info, ctx);
+      thr->ignore_interceptors = i;
+    } else {
+      CallUserSignalHandler(thr, sync, sigact, sig, info, ctx);
+    }
     CHECK_EQ(thr->in_signal_handler, true);
     thr->in_signal_handler = false;
     return;
@@ -1793,13 +1871,21 @@ TSAN_INTERCEPTOR(int, munlockall, void) {
 }
 
 TSAN_INTERCEPTOR(int, fork, int fake) {
+  if (cur_thread()->in_symbolizer)
+    return REAL(fork)(fake);
   SCOPED_INTERCEPTOR_RAW(fork, fake);
+  ForkBefore(thr, pc);
   int pid = REAL(fork)(fake);
   if (pid == 0) {
     // child
+    ForkChildAfter(thr, pc);
     FdOnFork(thr, pc);
   } else if (pid > 0) {
     // parent
+    ForkParentAfter(thr, pc);
+  } else {
+    // error
+    ForkParentAfter(thr, pc);
   }
   return pid;
 }
@@ -1892,6 +1978,8 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 
 #define TSAN_SYSCALL() \
   ThreadState *thr = cur_thread(); \
+  if (thr->ignore_interceptors) \
+    return; \
   ScopedSyscall scoped_syscall(thr) \
 /**/
 
@@ -1944,15 +2032,21 @@ static USED void syscall_fd_release(uptr pc, int fd) {
 
 static void syscall_pre_fork(uptr pc) {
   TSAN_SYSCALL();
+  ForkBefore(thr, pc);
 }
 
-static void syscall_post_fork(uptr pc, int res) {
+static void syscall_post_fork(uptr pc, int pid) {
   TSAN_SYSCALL();
-  if (res == 0) {
+  if (pid == 0) {
     // child
+    ForkChildAfter(thr, pc);
     FdOnFork(thr, pc);
-  } else if (res > 0) {
+  } else if (pid > 0) {
     // parent
+    ForkParentAfter(thr, pc);
+  } else {
+    // error
+    ForkParentAfter(thr, pc);
   }
 }
 
@@ -2004,53 +2098,6 @@ static void finalize(void *arg) {
   REAL(fflush)(0);
   if (status)
     REAL(_exit)(status);
-}
-
-void ProcessPendingSignals(ThreadState *thr) {
-  SignalContext *sctx = SigCtx(thr);
-  if (sctx == 0 || sctx->pending_signal_count == 0 || thr->in_signal_handler)
-    return;
-  Context *ctx = CTX();
-  thr->in_signal_handler = true;
-  sctx->pending_signal_count = 0;
-  // These are too big for stack.
-  static THREADLOCAL __sanitizer_sigset_t emptyset, oldset;
-  REAL(sigfillset)(&emptyset);
-  pthread_sigmask(SIG_SETMASK, &emptyset, &oldset);
-  for (int sig = 0; sig < kSigCount; sig++) {
-    SignalDesc *signal = &sctx->pending_signals[sig];
-    if (signal->armed) {
-      signal->armed = false;
-      if (sigactions[sig].sa_handler != SIG_DFL
-          && sigactions[sig].sa_handler != SIG_IGN) {
-        // Insure that the handler does not spoil errno.
-        const int saved_errno = errno;
-        errno = 0;
-        if (signal->sigaction)
-          sigactions[sig].sa_sigaction(sig, &signal->siginfo, &signal->ctx);
-        else
-          sigactions[sig].sa_handler(sig);
-        if (flags()->report_bugs && errno != 0) {
-          __tsan::StackTrace stack;
-          uptr pc = signal->sigaction ?
-              (uptr)sigactions[sig].sa_sigaction :
-              (uptr)sigactions[sig].sa_handler;
-          pc += 1;  // return address is expected, OutputReport() will undo this
-          stack.Init(&pc, 1);
-          ThreadRegistryLock l(ctx->thread_registry);
-          ScopedReport rep(ReportTypeErrnoInSignal);
-          if (!IsFiredSuppression(ctx, rep, stack)) {
-            rep.AddStack(&stack);
-            OutputReport(ctx, rep, rep.GetReport()->stacks[0]);
-          }
-        }
-        errno = saved_errno;
-      }
-    }
-  }
-  pthread_sigmask(SIG_SETMASK, &oldset, 0);
-  CHECK_EQ(thr->in_signal_handler, true);
-  thr->in_signal_handler = false;
 }
 
 static void unreachable() {
