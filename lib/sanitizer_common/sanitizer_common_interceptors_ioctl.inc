@@ -14,14 +14,18 @@
 
 struct ioctl_desc {
   unsigned req;
-  // FIXME: support read+write arguments. Those are currently marked as WRITE.
+  // FIXME: support read+write arguments. Currently READWRITE and WRITE do the
+  // same thing.
+  // XXX: The declarations below may use WRITE instead of READWRITE, unless
+  // explicitly noted.
   enum {
     NONE,
     READ,
     WRITE,
+    READWRITE,
     CUSTOM
-  } type : 2;
-  unsigned size : 30;
+  } type : 3;
+  unsigned size : 29;
   const char* name;
 };
 
@@ -525,14 +529,15 @@ static const ioctl_desc *ioctl_lookup(unsigned req) {
   // Sanity check: requests that encode access size are either read or write and
   // have size of 0 in the table.
   if (desc && desc->size == 0 &&
-      (desc->type == ioctl_desc::WRITE || desc->type == ioctl_desc::READ))
+      (desc->type == ioctl_desc::READWRITE || desc->type == ioctl_desc::WRITE ||
+       desc->type == ioctl_desc::READ))
     return desc;
   return 0;
 }
 
 static void ioctl_common_pre(void *ctx, const ioctl_desc *desc, int d,
                              unsigned request, void *arg) {
-  if (desc->type == ioctl_desc::READ) {
+  if (desc->type == ioctl_desc::READ || desc->type == ioctl_desc::READWRITE) {
     unsigned size = desc->size ? desc->size : IOC_SIZE(request);
     COMMON_INTERCEPTOR_READ_RANGE(ctx, arg, size);
   }
@@ -550,7 +555,7 @@ static void ioctl_common_pre(void *ctx, const ioctl_desc *desc, int d,
 
 static void ioctl_common_post(void *ctx, const ioctl_desc *desc, int res, int d,
                               unsigned request, void *arg) {
-  if (desc->type == ioctl_desc::WRITE) {
+  if (desc->type == ioctl_desc::WRITE || desc->type == ioctl_desc::READWRITE) {
     // FIXME: add verbose output
     unsigned size = desc->size ? desc->size : IOC_SIZE(request);
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, arg, size);

@@ -101,6 +101,8 @@ elseif("${LLVM_NATIVE_ARCH}" STREQUAL "PowerPC")
   # clang are different.
   test_target_arch(ppc64 ${TARGET_64_BIT_CFLAGS})
   test_target_arch(ppc ${TARGET_32_BIT_CFLAGS})
+elseif("${LLVM_NATIVE_ARCH}" STREQUAL "ARM")
+  test_target_arch(arm "")
 endif()
 
 # We only support running instrumented tests when we're not cross compiling
@@ -140,6 +142,7 @@ if (NOT MSVC)
     -fno-exceptions
     -fomit-frame-pointer
     -fvisibility=hidden
+    -fno-function-sections
     )
 # master has:
 #  -funwind-tables
@@ -217,7 +220,7 @@ endif()
 # Architectures supported by Sanitizer runtimes. Specific sanitizers may
 # support only subset of these (e.g. TSan works on x86_64 only).
 filter_available_targets(SANITIZER_COMMON_SUPPORTED_ARCH
-  x86_64 i386 ppc64 ppc)
+  x86_64 i386 ppc64 ppc arm)
 
 add_subdirectory(include)
 

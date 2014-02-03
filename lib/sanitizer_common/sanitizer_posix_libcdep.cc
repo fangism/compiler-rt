@@ -16,6 +16,8 @@
 
 #if SANITIZER_LINUX || SANITIZER_MAC
 #include "sanitizer_common.h"
+#include "sanitizer_flags.h"
+#include "sanitizer_platform_limits_posix.h"
 #include "sanitizer_stacktrace.h"
 
 #include <errno.h>
@@ -90,6 +92,7 @@ int internal_isatty(fd_t fd) {
   return isatty(fd);
 }
 
+#ifndef SANITIZER_GO
 // TODO(glider): different tools may require different altstack size.
 static const uptr kAltStackSize = SIGSTKSZ * 4;  // SIGSTKSZ is not enough.
 
@@ -116,6 +119,30 @@ void UnsetAlternateSignalStack() {
   CHECK_EQ(0, sigaltstack(&altstack, &oldstack));
   UnmapOrDie(oldstack.ss_sp, oldstack.ss_size);
 }
+
+typedef void (*sa_sigaction_t)(int, siginfo_t *, void *);
+static void MaybeInstallSigaction(int signum,
+                                  SignalHandlerType handler) {
+  if (!IsDeadlySignal(signum))
+    return;
+  struct sigaction sigact;
+  internal_memset(&sigact, 0, sizeof(sigact));
+  sigact.sa_sigaction = (sa_sigaction_t)handler;
+  sigact.sa_flags = SA_SIGINFO;
+  if (common_flags()->use_sigaltstack) sigact.sa_flags |= SA_ONSTACK;
+  CHECK_EQ(0, internal_sigaction(signum, &sigact, 0));
+  VReport(1, "Installed the sigaction for signal %d\n", signum);
+}
+
+void InstallDeadlySignalHandlers(SignalHandlerType handler) {
+  // Set the alternate signal stack for the main thread.
+  // This will cause SetAlternateSignalStack to be called twice, but the stack
+  // will be actually set only once.
+  if (common_flags()->use_sigaltstack) SetAlternateSignalStack();
+  MaybeInstallSigaction(SIGSEGV, handler);
+  MaybeInstallSigaction(SIGBUS, handler);
+}
+#endif  // SANITIZER_GO
 
 }  // namespace __sanitizer
 

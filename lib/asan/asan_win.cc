@@ -70,15 +70,15 @@ void *AsanDoesNotSupportStaticLinkage() {
   return 0;
 }
 
-void InstallSignalHandlers() {
-  // FIXME: Decide what to do on Windows.
-}
-
 void AsanPlatformThreadInit() {
   // Nothing here for now.
 }
 
 void ReadContextStack(void *context, uptr *stack, uptr *ssize) {
+  UNIMPLEMENTED();
+}
+
+void AsanOnSIGSEGV(int, void *siginfo, void *context) {
   UNIMPLEMENTED();
 }
 

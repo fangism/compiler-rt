@@ -1,4 +1,4 @@
-/*===-- udivmodsi4.S - 32-bit unsigned integer divide ---------------------===//
+/*===-- udivsi3.S - 32-bit unsigned integer divide ------------------------===//
  *
  *                     The LLVM Compiler Infrastructure
  *
@@ -15,14 +15,6 @@
 #include "../assembly.h"
 
 	.syntax unified
-
-#ifdef ARM_HAS_BX
-#define	JMP(r)		bx	r
-#define	JMPc(r,c)	bx##c	r
-#else
-#define	JMP(r)		mov	pc, r
-#define	JMPc(r,c)	mov##c	pc, r
-#endif
 
 	.text
 	.p2align 2

@@ -22,6 +22,7 @@ set(SANITIZER_SOURCES
   sanitizer_symbolizer.cc
   sanitizer_symbolizer_libbacktrace.cc
   sanitizer_symbolizer_win.cc
+  sanitizer_tls_get_addr.cc
   sanitizer_thread_registry.cc
   sanitizer_win.cc)
 
@@ -55,6 +56,7 @@ set(SANITIZER_HEADERS
   sanitizer_libignore.h
   sanitizer_linux.h
   sanitizer_list.h
+  sanitizer_mac.h
   sanitizer_mutex.h
   sanitizer_placement_new.h
   sanitizer_platform.h

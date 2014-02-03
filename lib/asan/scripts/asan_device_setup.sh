@@ -65,9 +65,9 @@ while [[ $# > 0 ]]; do
   shift
 done
 
-ADB="adb"
+ADB=${ADB:-adb}
 if [[ x$device != x ]]; then
-    ADB="adb -s $device"
+    ADB="$ADB -s $device"
 fi
 
 ASAN_RT="libclang_rt.asan-arm-android.so"
@@ -75,6 +75,7 @@ ASAN_RT="libclang_rt.asan-arm-android.so"
 if [[ x$revert == xyes ]]; then
     echo '>> Uninstalling ASan'
     $ADB root
+    $ADB wait-for-device
     $ADB remount
     $ADB shell mv /system/bin/app_process.real /system/bin/app_process
     $ADB shell rm /system/bin/asanwrapper
@@ -115,6 +116,7 @@ mkdir "$TMPDIROLD"
 
 echo '>> Remounting /system rw'
 $ADB root
+$ADB wait-for-device
 $ADB remount
 
 echo '>> Copying files from the device'
