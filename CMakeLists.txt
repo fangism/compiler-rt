@@ -141,9 +141,7 @@ if (NOT MSVC)
     -fno-builtin
     -fno-exceptions
     -fomit-frame-pointer
-    -fvisibility=hidden
-    -fno-function-sections
-    )
+    -fvisibility=hidden)
 # master has:
 #  -funwind-tables
 #  -fno-stack-protector
@@ -169,6 +167,11 @@ if (NOT MSVC)
 #   only enable -g for stage 1, stage 2 (-no-integrated-as) unable to handle -g
 #    list(APPEND SANITIZER_COMMON_CFLAGS -g)
   endif()
+endif()
+# Build sanitizer runtimes with -fno-function-sections.
+check_cxx_compiler_flag("-Werror -fno-function-sections" SUPPORTS_FNO_FUNCTION_SECTIONS_FLAG)
+if(SUPPORTS_FNO_FUNCTION_SECTIONS_FLAG)
+  list(APPEND SANITIZER_COMMON_CFLAGS -fno-function-sections)
 endif()
 # Warnings suppressions.
 check_cxx_compiler_flag(-Wno-variadic-macros SUPPORTS_NO_VARIADIC_MACROS_FLAG)
