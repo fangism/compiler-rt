@@ -162,7 +162,8 @@ endif()
 if (NOT MSVC)
   check_cxx_compiler_flag(-gline-tables-only SUPPORTS_GLINE_TABLES_ONLY_FLAG)
   if(SUPPORTS_GLINE_TABLES_ONLY_FLAG AND NOT COMPILER_RT_DEBUG)
-    list(APPEND SANITIZER_COMMON_CFLAGS -gline-tables-only)
+#   only enable -g for stage 1, system assembler cannot handle .loc directives
+#    list(APPEND SANITIZER_COMMON_CFLAGS -gline-tables-only)
   else()
 #   only enable -g for stage 1, stage 2 (-no-integrated-as) unable to handle -g
 #    list(APPEND SANITIZER_COMMON_CFLAGS -g)
