@@ -45,11 +45,14 @@
 #include <time.h>
 #include <wchar.h>
 
+#if !SANITIZER_ANDROID
+#include <sys/mount.h>
+#endif
+
 #if SANITIZER_LINUX
 #include <mntent.h>
 #include <netinet/ether.h>
 #include <utime.h>
-#include <sys/mount.h>
 #include <sys/ptrace.h>
 #include <sys/sysinfo.h>
 #include <sys/vt.h>
@@ -66,6 +69,7 @@
 #endif
 
 #if !SANITIZER_ANDROID
+#include <ifaddrs.h>
 #include <sys/ucontext.h>
 #include <wordexp.h>
 #endif
@@ -95,7 +99,6 @@
 #include <linux/serial.h>
 #include <sys/msg.h>
 #include <sys/ipc.h>
-#include <sys/shm.h>
 #endif // SANITIZER_LINUX && !SANITIZER_ANDROID
 
 #if SANITIZER_ANDROID
@@ -115,7 +118,6 @@
 #if SANITIZER_MAC
 #include <net/ethernet.h>
 #include <sys/filio.h>
-#include <sys/mount.h>
 #include <sys/sockio.h>
 #endif
 
@@ -139,6 +141,7 @@ namespace __sanitizer {
   unsigned pid_t_sz = sizeof(pid_t);
   unsigned timeval_sz = sizeof(timeval);
   unsigned uid_t_sz = sizeof(uid_t);
+  unsigned gid_t_sz = sizeof(gid_t);
   unsigned mbstate_t_sz = sizeof(mbstate_t);
   unsigned sigset_t_sz = sizeof(sigset_t);
   unsigned struct_timezone_sz = sizeof(struct timezone);
@@ -148,6 +151,7 @@ namespace __sanitizer {
   unsigned struct_statfs_sz = sizeof(struct statfs);
 
 #if !SANITIZER_ANDROID
+  unsigned struct_sockaddr_sz = sizeof(struct sockaddr);
   unsigned ucontext_t_sz = sizeof(ucontext_t);
 #if HAVE_STRUCT_STATFS64
   unsigned struct_statfs64_sz = sizeof(struct statfs64);
@@ -167,10 +171,10 @@ namespace __sanitizer {
   unsigned struct_old_utsname_sz = sizeof(struct old_utsname);
   unsigned struct_oldold_utsname_sz = sizeof(struct oldold_utsname);
   unsigned struct_itimerspec_sz = sizeof(struct itimerspec);
-  unsigned struct_ustat_sz = sizeof(struct ustat);
 #endif // SANITIZER_LINUX
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
+  unsigned struct_ustat_sz = sizeof(struct ustat);
   unsigned struct_rlimit64_sz = sizeof(struct rlimit64);
   unsigned struct_timex_sz = sizeof(struct timex);
   unsigned struct_msqid_ds_sz = sizeof(struct msqid_ds);
@@ -766,6 +770,7 @@ namespace __sanitizer {
   unsigned IOCTL_TIOCSSERIAL = TIOCSSERIAL;
 #endif
 
+  const int errno_EINVAL = EINVAL;
 // EOWNERDEAD is not present in some older platforms.
 #if defined(EOWNERDEAD)
   extern const int errno_EOWNERDEAD = EOWNERDEAD;
@@ -788,7 +793,28 @@ CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_name);
 CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_phdr);
 CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_phnum);
 
+// FIXME: We define those on Linux and Mac, but only check on Linux.
+COMPILER_CHECK(IOC_NRBITS == _IOC_NRBITS);
+COMPILER_CHECK(IOC_TYPEBITS == _IOC_TYPEBITS);
+COMPILER_CHECK(IOC_SIZEBITS == _IOC_SIZEBITS);
+COMPILER_CHECK(IOC_DIRBITS == _IOC_DIRBITS);
+COMPILER_CHECK(IOC_NRMASK == _IOC_NRMASK);
+COMPILER_CHECK(IOC_TYPEMASK == _IOC_TYPEMASK);
+COMPILER_CHECK(IOC_SIZEMASK == _IOC_SIZEMASK);
+COMPILER_CHECK(IOC_DIRMASK == _IOC_DIRMASK);
+COMPILER_CHECK(IOC_NRSHIFT == _IOC_NRSHIFT);
+COMPILER_CHECK(IOC_TYPESHIFT == _IOC_TYPESHIFT);
+COMPILER_CHECK(IOC_SIZESHIFT == _IOC_SIZESHIFT);
+COMPILER_CHECK(IOC_DIRSHIFT == _IOC_DIRSHIFT);
+COMPILER_CHECK(IOC_NONE == _IOC_NONE);
+COMPILER_CHECK(IOC_WRITE == _IOC_WRITE);
+COMPILER_CHECK(IOC_READ == _IOC_READ);
+COMPILER_CHECK(EVIOC_ABS_MAX == ABS_MAX);
+COMPILER_CHECK(EVIOC_EV_MAX == EV_MAX);
 COMPILER_CHECK(IOC_SIZE(0x12345678) == _IOC_SIZE(0x12345678));
+COMPILER_CHECK(IOC_DIR(0x12345678) == _IOC_DIR(0x12345678));
+COMPILER_CHECK(IOC_NR(0x12345678) == _IOC_NR(0x12345678));
+COMPILER_CHECK(IOC_TYPE(0x12345678) == _IOC_TYPE(0x12345678));
 #endif
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
@@ -952,5 +978,27 @@ CHECK_SIZE_AND_OFFSET(shmid_ds, shm_nattch);
 #endif
 
 CHECK_TYPE_SIZE(clock_t);
+
+#if !SANITIZER_ANDROID
+CHECK_TYPE_SIZE(ifaddrs);
+CHECK_SIZE_AND_OFFSET(ifaddrs, ifa_next);
+CHECK_SIZE_AND_OFFSET(ifaddrs, ifa_name);
+CHECK_SIZE_AND_OFFSET(ifaddrs, ifa_addr);
+CHECK_SIZE_AND_OFFSET(ifaddrs, ifa_netmask);
+#if SANITIZER_LINUX
+// Compare against the union, because we can't reach into the union in a
+// compliant way.
+#ifdef ifa_dstaddr
+#undef ifa_dstaddr
+#endif
+COMPILER_CHECK(sizeof(((__sanitizer_ifaddrs *)NULL)->ifa_dstaddr) ==
+               sizeof(((ifaddrs *)NULL)->ifa_ifu));
+COMPILER_CHECK(offsetof(__sanitizer_ifaddrs, ifa_dstaddr) ==
+               offsetof(ifaddrs, ifa_ifu));
+#else
+CHECK_SIZE_AND_OFFSET(ifaddrs, ifa_dstaddr);
+#endif  // SANITIZER_LINUX
+CHECK_SIZE_AND_OFFSET(ifaddrs, ifa_data);
+#endif
 
 #endif  // SANITIZER_LINUX || SANITIZER_MAC
