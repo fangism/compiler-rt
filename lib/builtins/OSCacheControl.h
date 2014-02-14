@@ -8,8 +8,8 @@
  * ===----------------------------------------------------------------------===
  */
 
-#ifndef	__OS_CACHHE_CONTROL_H__
-#define	__OS_CACHHE_CONTROL_H__
+#ifndef	__OS_CACHE_CONTROL_H__
+#define	__OS_CACHE_CONTROL_H__
 
 #include <stddef.h>		/* size_t */
 #include <sys/cdefs.h>
@@ -48,4 +48,4 @@ void    sys_dcache_flush( void *start, size_t len);
 
 __END_DECLS
 
-#endif	/* __OS_CACHHE_CONTROL_H__ */
+#endif	/* __OS_CACHE_CONTROL_H__ */
