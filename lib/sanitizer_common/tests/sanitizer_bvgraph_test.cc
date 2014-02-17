@@ -24,10 +24,39 @@
 using namespace __sanitizer;
 using namespace std;
 
+typedef BasicBitVector<u8> BV1;
+typedef BasicBitVector<> BV2;
+typedef TwoLevelBitVector<> BV3;
+typedef TwoLevelBitVector<3, BasicBitVector<u8> > BV4;
+
+template<class G>
+void PrintGraph(const G &g) {
+  for (uptr i = 0; i < g.size(); i++) {
+    for (uptr j = 0; j < g.size(); j++) {
+      fprintf(stderr, "%d", g.hasEdge(i, j));
+    }
+    fprintf(stderr, "\n");
+  }
+}
+
+
 class SimpleGraph {
  public:
+  void clear() { s_.clear(); }
   bool addEdge(uptr from, uptr to) {
     return s_.insert(idx(from, to)).second;
+  }
+  bool removeEdge(uptr from, uptr to) {
+    return s_.erase(idx(from, to));
+  }
+  template <class G>
+  void checkSameAs(G *g) {
+    for (set<uptr>::iterator it = s_.begin(); it != s_.end(); ++it) {
+      uptr from = *it >> 16;
+      uptr to = *it & ((1 << 16) - 1);
+      EXPECT_TRUE(g->removeEdge(from, to));
+    }
+    EXPECT_TRUE(g->empty());
   }
  private:
   uptr idx(uptr from, uptr to) {
@@ -37,8 +66,8 @@ class SimpleGraph {
   set<uptr> s_;
 };
 
-TEST(SanitizerCommon, BVGraph) {
-  typedef TwoLevelBitVector<> BV;
+template <class BV>
+void BasicTest() {
   BVGraph<BV> g;
   g.clear();
   BV target;
@@ -46,7 +75,7 @@ TEST(SanitizerCommon, BVGraph) {
   set<uptr> s;
   set<uptr> s_target;
   int num_reachable = 0;
-  for (int it = 0; it < 3000; it++) {
+  for (int it = 0; it < 1000; it++) {
     target.clear();
     s_target.clear();
     for (int t = 0; t < 4; t++) {
@@ -76,6 +105,60 @@ TEST(SanitizerCommon, BVGraph) {
     }
   }
   EXPECT_GT(num_reachable, 0);
+}
+
+TEST(BVGraph, BasicTest) {
+  BasicTest<BV1>();
+  BasicTest<BV2>();
+  BasicTest<BV3>();
+  BasicTest<BV4>();
+}
+
+template <class BV>
+void RemoveEdges() {
+  SimpleGraph s_g;
+  BVGraph<BV> g;
+  g.clear();
+  BV bv;
+  set<uptr> s;
+  for (int it = 0; it < 100; it++) {
+    s.clear();
+    bv.clear();
+    s_g.clear();
+    g.clear();
+    for (uptr j = 0; j < g.size() * 2; j++) {
+      uptr from = my_rand() % g.size();
+      uptr to = my_rand() % g.size();
+      EXPECT_EQ(g.addEdge(from, to), s_g.addEdge(from, to));
+    }
+    for (uptr j = 0; j < 5; j++) {
+      uptr idx = my_rand() % g.size();
+      s.insert(idx);
+      bv.setBit(idx);
+    }
+
+    if (it % 2) {
+      g.removeEdgesFrom(bv);
+      for (set<uptr>::iterator from = s.begin(); from != s.end(); ++from) {
+        for (uptr to = 0; to < g.size(); to++)
+          s_g.removeEdge(*from, to);
+      }
+    } else {
+      g.removeEdgesTo(bv);
+      for (set<uptr>::iterator to = s.begin(); to != s.end(); ++to) {
+        for (uptr from = 0; from < g.size(); from++)
+          s_g.removeEdge(from, *to);
+      }
+    }
+    s_g.checkSameAs(&g);
+  }
+}
+
+TEST(BVGraph, RemoveEdges) {
+  RemoveEdges<BV1>();
+  RemoveEdges<BV2>();
+  RemoveEdges<BV3>();
+  RemoveEdges<BV4>();
 }
 
 template <class BV>
@@ -128,9 +211,53 @@ void Test_isReachable() {
   EXPECT_TRUE(g.isReachable(f3, target));
 }
 
-TEST(SanitizerCommon, BVGraph_isReachable) {
+TEST(BVGraph, isReachable) {
   Test_isReachable<BasicBitVector<u8> >();
   Test_isReachable<BasicBitVector<> >();
   Test_isReachable<TwoLevelBitVector<> >();
   Test_isReachable<TwoLevelBitVector<3, BasicBitVector<u8> > >();
+}
+
+template <class BV>
+void LongCycle() {
+  BVGraph<BV> g;
+  g.clear();
+  vector<uptr> path_vec(g.size());
+  uptr *path = path_vec.data();
+  uptr start = 5;
+  for (uptr i = start; i < g.size() - 1; i++) {
+    g.addEdge(i, i + 1);
+    for (uptr j = 0; j < start; j++)
+      g.addEdge(i, j);
+  }
+  //  Bad graph that looks like this:
+  // 00000000000000
+  // 00000000000000
+  // 00000000000000
+  // 00000000000000
+  // 00000000000000
+  // 11111010000000
+  // 11111001000000
+  // 11111000100000
+  // 11111000010000
+  // 11111000001000
+  // 11111000000100
+  // 11111000000010
+  // 11111000000001
+  // if (g.size() <= 64) PrintGraph(g);
+  BV target;
+  for (uptr i = start + 1; i < g.size(); i += 11) {
+    // if ((i & (i - 1)) == 0) fprintf(stderr, "Path: : %zd\n", i);
+    target.clear();
+    target.setBit(i);
+    EXPECT_TRUE(g.isReachable(start, target));
+    EXPECT_EQ(g.findPath(start, target, path, g.size()), i - start + 1);
+  }
+}
+
+TEST(BVGraph, LongCycle) {
+  LongCycle<BasicBitVector<u8> >();
+  LongCycle<BasicBitVector<> >();
+  LongCycle<TwoLevelBitVector<> >();
+  LongCycle<TwoLevelBitVector<2, BasicBitVector<u8> > >();
 }
