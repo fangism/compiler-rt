@@ -14,7 +14,7 @@
 assemble_clang_rt() {
 pushd $builddir
 mkdir -p $objdir
-for f in $crtsrcdir/lib/$arch/*.S
+for f in $crtsrcdir/lib/builtins/$arch/*.S
 do      
         b=`basename $f`
 	echo "Assembling $arch/$b."
