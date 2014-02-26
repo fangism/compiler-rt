@@ -568,14 +568,30 @@ class ScopedInErrorReport {
   }
 };
 
+void ReportStackOverflow(uptr pc, uptr sp, uptr bp, void *context, uptr addr) {
+  ScopedInErrorReport in_report;
+  Decorator d;
+  Printf("%s", d.Warning());
+  Report(
+      "ERROR: AddressSanitizer: stack-overflow on address %p"
+      " (pc %p sp %p bp %p T%d)\n",
+      (void *)addr, (void *)pc, (void *)sp, (void *)bp,
+      GetCurrentTidOrInvalid());
+  Printf("%s", d.EndWarning());
+  GET_STACK_TRACE_SIGNAL(pc, bp, context);
+  stack.Print();
+  ReportErrorSummary("stack-overflow", &stack);
+}
+
 void ReportSIGSEGV(uptr pc, uptr sp, uptr bp, void *context, uptr addr) {
   ScopedInErrorReport in_report;
   Decorator d;
   Printf("%s", d.Warning());
-  Report("ERROR: AddressSanitizer: SEGV on unknown address %p"
-             " (pc %p sp %p bp %p T%d)\n",
-             (void*)addr, (void*)pc, (void*)sp, (void*)bp,
-             GetCurrentTidOrInvalid());
+  Report(
+      "ERROR: AddressSanitizer: SEGV on unknown address %p"
+      " (pc %p sp %p bp %p T%d)\n",
+      (void *)addr, (void *)pc, (void *)sp, (void *)bp,
+      GetCurrentTidOrInvalid());
   Printf("%s", d.EndWarning());
   GET_STACK_TRACE_SIGNAL(pc, bp, context);
   stack.Print();

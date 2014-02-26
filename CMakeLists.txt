@@ -1,13 +1,19 @@
 # CMake build for CompilerRT.
 #
 # This build assumes that CompilerRT is checked out into the
-# 'projects/compiler-rt' inside of an LLVM tree, it is not a stand-alone build
-# system.
+# 'projects/compiler-rt' inside of an LLVM tree.
+# Standalone build system for CompilerRT is not yet ready.
 #
 # An important constraint of the build is that it only produces libraries
 # based on the ability of the host toolchain to target various platforms.
 
-include(LLVMParseArguments)
+# Check if compiler-rt is built as a standalone project.
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(CompilerRT)
+  set(COMPILER_RT_STANDALONE_BUILD TRUE)
+else()
+  set(COMPILER_RT_STANDALONE_BUILD FALSE)
+endif()
 
 # The CompilerRT build system requires CMake version 2.8.8 or higher in order
 # to use its support for building convenience "libraries" as a collection of
@@ -20,36 +26,101 @@ else()
   cmake_minimum_required(VERSION 2.8.12.1)
 endif()
 
-
 # Top level target used to build all compiler-rt libraries.
-add_custom_target(compiler-rt)
+add_custom_target(compiler-rt ALL)
 
-# Compute the Clang version from the LLVM version.
-# FIXME: We should be able to reuse CLANG_VERSION variable calculated
-#        in Clang cmake files, instead of copying the rules here.
-string(REGEX MATCH "[0-9]+\\.[0-9]+(\\.[0-9]+)?" CLANG_VERSION
-       ${PACKAGE_VERSION})
-# Setup the paths where compiler-rt runtimes and headers should be stored.
-set(LIBCLANG_INSTALL_PATH lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION})
-string(TOLOWER ${CMAKE_SYSTEM_NAME} LIBCLANG_OS_DIR)
-set(CLANG_RESOURCE_DIR ${LLVM_BINARY_DIR}/lib/clang/${CLANG_VERSION})
-set(COMPILER_RT_LIBRARY_OUTPUT_DIR ${CLANG_RESOURCE_DIR}/lib/${LIBCLANG_OS_DIR})
+if (NOT COMPILER_RT_STANDALONE_BUILD)
+  # Compute the Clang version from the LLVM version.
+  # FIXME: We should be able to reuse CLANG_VERSION variable calculated
+  #        in Clang cmake files, instead of copying the rules here.
+  string(REGEX MATCH "[0-9]+\\.[0-9]+(\\.[0-9]+)?" CLANG_VERSION
+         ${PACKAGE_VERSION})
+  # Setup the paths where compiler-rt runtimes and headers should be stored.
+  set(COMPILER_RT_OUTPUT_DIR ${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION})
+  set(COMPILER_RT_INSTALL_PATH lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION})
+  option(COMPILER_RT_INCLUDE_TESTS "Generate and build compiler-rt unit tests."
+         ${LLVM_INCLUDE_TESTS})
+ option(COMPILER_RT_ENABLE_WERROR "Fail and stop if warning is triggered"
+        ${LLVM_ENABLE_WERROR})
+  # Use just-built Clang to compile/link tests.
+  set(COMPILER_RT_TEST_COMPILER ${LLVM_RUNTIME_OUTPUT_INTDIR}/clang)
+  set(COMPILER_RT_TEST_COMPILER_ID Clang)
+else()
+  # Take output dir and install path from the user.
+  set(COMPILER_RT_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR} CACHE PATH
+    "Path where built compiler-rt libraries should be stored.")
+  set(COMPILER_RT_INSTALL_PATH ${CMAKE_INSTALL_PREFIX} CACHE PATH
+    "Path where built compiler-rt libraries should be installed.")
+  option(COMPILER_RT_INCLUDE_TESTS "Generate and build compiler-rt unit tests." OFF)
+  option(COMPILER_RT_ENABLE_WERROR "Fail and stop if warning is triggered" OFF)
+  # Use a host compiler to compile/link tests.
+  set(COMPILER_RT_TEST_COMPILER ${CMAKE_C_COMPILER})
+  set(COMPILER_RT_TEST_COMPILER_ID ${CMAKE_C_COMPILER_ID})
+
+  set(LLVM_CONFIG_PATH "" CACHE PATH "Path to llvm-config binary")
+  if (NOT LLVM_CONFIG_PATH)
+    find_program(LLVM_CONFIG_PATH "llvm-config")
+    if (NOT LLVM_CONFIG_PATH)
+      message(FATAL_ERROR "llvm-config not found: specify LLVM_CONFIG_PATH")
+    endif()
+  endif()
+  execute_process(
+    COMMAND ${LLVM_CONFIG_PATH} "--obj-root" "--bindir" "--libdir" "--src-root"
+    RESULT_VARIABLE HAD_ERROR
+    OUTPUT_VARIABLE CONFIG_OUTPUT)
+  if (HAD_ERROR)
+    message(FATAL_ERROR "llvm-config failed with status ${HAD_ERROR}")
+  endif()
+  string(REGEX REPLACE "[ \t]*[\r\n]+[ \t]*" ";" CONFIG_OUTPUT ${CONFIG_OUTPUT})
+  list(GET CONFIG_OUTPUT 0 LLVM_BINARY_DIR)
+  list(GET CONFIG_OUTPUT 1 LLVM_TOOLS_BINARY_DIR)
+  list(GET CONFIG_OUTPUT 2 LLVM_LIBRARY_DIR)
+  list(GET CONFIG_OUTPUT 3 LLVM_MAIN_SRC_DIR)
+
+  # Make use of LLVM CMake modules.
+  set(LLVM_CMAKE_PATH "${LLVM_BINARY_DIR}/share/llvm/cmake")
+  list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_PATH}")
+  # Get some LLVM variables from LLVMConfig.
+  include("${LLVM_CMAKE_PATH}/LLVMConfig.cmake")
+
+  set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib)
+
+  # Find Python interpreter.
+  set(Python_ADDITIONAL_VERSIONS 2.7 2.6 2.5)
+  include(FindPythonInterp)
+  if(NOT PYTHONINTERP_FOUND)
+    message(FATAL_ERROR "
+      Unable to find Python interpreter required testing. Please install Python
+      or specify the PYTHON_EXECUTABLE CMake variable.")
+  endif()
+
+  # Define default arguments to lit.
+  set(LIT_ARGS_DEFAULT "-sv")
+  if (MSVC OR XCODE)
+    set(LIT_ARGS_DEFAULT "${LIT_ARGS_DEFAULT} --no-progress-bar")
+  endif()
+  set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
+endif()
+
+string(TOLOWER ${CMAKE_SYSTEM_NAME} COMPILER_RT_OS_DIR)
+set(COMPILER_RT_LIBRARY_OUTPUT_DIR
+  ${COMPILER_RT_OUTPUT_DIR}/lib/${COMPILER_RT_OS_DIR})
 set(COMPILER_RT_LIBRARY_INSTALL_DIR
-  ${LIBCLANG_INSTALL_PATH}/lib/${LIBCLANG_OS_DIR})
+  ${COMPILER_RT_INSTALL_PATH}/lib/${COMPILER_RT_OS_DIR})
 
-# Add path for custom modules
+# Add path for custom compiler-rt modules.
 set(CMAKE_MODULE_PATH
-  ${CMAKE_MODULE_PATH}
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules"
+  ${CMAKE_MODULE_PATH}
   )
-include(AddCompilerRT)
+include(CompilerRTUtils)
 
 set(COMPILER_RT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(COMPILER_RT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 # Setup custom SDK sysroots.
 set(COMPILER_RT_DARWIN_SDK_SYSROOT ${COMPILER_RT_SOURCE_DIR}/SDKs/darwin)
 set(COMPILER_RT_LINUX_SDK_SYSROOT ${COMPILER_RT_SOURCE_DIR}/SDKs/linux)
-include(SanitizerUtils)
 
 set(COMPILER_RT_EXTRA_ANDROID_HEADERS ${COMPILER_RT_SOURCE_DIR}/third_party/android/include)
 
@@ -142,69 +213,60 @@ function(filter_available_targets out_var)
 endfunction()
 
 option(COMPILER_RT_DEBUG "Build runtimes with full debug info" OFF)
-
 # COMPILER_RT_DEBUG_PYBOOL is used by lit.common.configured.in.
 pythonize_bool(COMPILER_RT_DEBUG)
 
+#================================
+# Setup Compiler Flags
+#================================
+include(config-ix)
+
+if(COMPILER_RT_ENABLE_WERROR)
+  add_definitions_if(COMPILER_RT_HAS_WERROR_FLAG -Werror)
+  add_definitions_if(COMPILER_RT_HAS_WX_FLAG /WX)
+endif()
+
 # Provide some common commmandline flags for Sanitizer runtimes.
-if (NOT MSVC)
-  set(SANITIZER_COMMON_CFLAGS
-    -fPIC
-    -fno-builtin
-    -fno-exceptions
-    -fomit-frame-pointer
-    -fvisibility=hidden)
-# master has:
-#  -funwind-tables
-#  -fno-stack-protector
-#  -Wno-gnu  # Variadic macros with 0 arguments for ...
-  if (NOT COMPILER_RT_DEBUG)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FPIC_FLAG -fPIC)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_BUILTIN_FLAG -fno-builtin)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_EXCEPTIONS_FLAG -fno-exceptions)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FOMIT_FRAME_POINTER_FLAG -fomit-frame-pointer)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FASYNC_UNWIND_TABLES_FLAG -fasynchronous-unwind-tables)
+# append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FUNWIND_TABLES_FLAG -funwind-tables)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_STACK_PROTECTOR_FLAG -fno-stack-protector)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FVISIBILITY_HIDDEN_FLAG -fvisibility=hidden)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_FUNCTION_SECTIONS_FLAG -fno-function-sections)
+
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_MT_FLAG /MT)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_Oy_FLAG /Oy-)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_GS_FLAG /GS-)
+
+# Build with optimization, unless we're in debug mode.
+if(NOT COMPILER_RT_DEBUG)
+  if(MSVC)
+    list(APPEND SANITIZER_COMMON_CFLAGS /O2)
+  else()
     list(APPEND SANITIZER_COMMON_CFLAGS -O3)
   endif()
-else()
-  set(SANITIZER_COMMON_CFLAGS
-    /MT
-    /Zi
-    /Oy-
-    /GS-
-    /wd4722
-    )
 endif()
-# Build sanitizer runtimes with debug info. (MSVC gets /Zi above)
-if (NOT MSVC)
-  check_cxx_compiler_flag(-gline-tables-only SUPPORTS_GLINE_TABLES_ONLY_FLAG)
-  if(SUPPORTS_GLINE_TABLES_ONLY_FLAG AND NOT COMPILER_RT_DEBUG)
+
+# Build sanitizer runtimes with debug info.
+if(COMPILER_RT_HAS_GLINE_TABLES_ONLY_FLAG)
 #   only enable -g for stage 1, system assembler cannot handle .loc directives
-#    list(APPEND SANITIZER_COMMON_CFLAGS -gline-tables-only)
-  else()
+#  list(APPEND SANITIZER_COMMON_CFLAGS -gline-tables-only)
+elseif(COMPILER_RT_HAS_G_FLAG)
 #   only enable -g for stage 1, stage 2 (-no-integrated-as) unable to handle -g
-#    list(APPEND SANITIZER_COMMON_CFLAGS -g)
-  endif()
+#  list(APPEND SANITIZER_COMMON_CFLAGS -g)
+elseif(COMPILER_RT_HAS_Zi_FLAG)
+  list(APPEND SANITIZER_COMMON_CFLAGS /Zi)
 endif()
-# Build sanitizer runtimes with -fno-function-sections.
-check_cxx_compiler_flag("-Werror -fno-function-sections" SUPPORTS_FNO_FUNCTION_SECTIONS_FLAG)
-if(SUPPORTS_FNO_FUNCTION_SECTIONS_FLAG)
-  list(APPEND SANITIZER_COMMON_CFLAGS -fno-function-sections)
-endif()
-# Warnings suppressions.
-check_cxx_compiler_flag(-Wno-variadic-macros SUPPORTS_NO_VARIADIC_MACROS_FLAG)
-if(SUPPORTS_NO_VARIADIC_MACROS_FLAG)
-  list(APPEND SANITIZER_COMMON_CFLAGS -Wno-variadic-macros)
-endif()
-check_cxx_compiler_flag(-Wno-c99-extensions SUPPORTS_NO_C99_EXTENSIONS_FLAG)
-if(SUPPORTS_NO_C99_EXTENSIONS_FLAG)
-  list(APPEND SANITIZER_COMMON_CFLAGS -Wno-c99-extensions)
-endif()
-# Sanitizer may not have libstdc++, so we can have problems with virtual
-# destructors.
-check_cxx_compiler_flag(-Wno-non-virtual-dtor SUPPORTS_NO_NON_VIRTUAL_DTOR_FLAG)
-if (SUPPORTS_NO_NON_VIRTUAL_DTOR_FLAG)
-  list(APPEND SANITIZER_COMMON_CFLAGS -Wno-non-virtual-dtor)
-endif()
-check_cxx_compiler_flag(-Wglobal-constructors SUPPORTS_GLOBAL_CONSTRUCTORS_FLAG)
-# Not all sanitizers forbid global constructors.
-check_cxx_compiler_flag("-Werror -Wframe-larger-than=512"
-  SUPPORTS_FRAME_LARGER_THAN_FLAG)
+
+# Turn off several warnings.
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_GNU_FLAG -Wno-gnu)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_VARIADIC_MACROS_FLAG -Wno-variadic-macros)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_C99_EXTENSIONS_FLAG -Wno-c99-extensions)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_NON_VIRTUAL_DTOR_FLAG -Wno-non-virtual-dtor)
+append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WD4722_FLAG /wd4722)
 
 if(APPLE)
   # Obtain the iOS Simulator SDK path from xcodebuild.
@@ -213,8 +275,10 @@ if(APPLE)
     OUTPUT_VARIABLE IOSSIM_SDK_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
+  string(REGEX MATCH "-mmacosx-version-min="
+         MACOSX_VERSION_MIN_FLAG "${CMAKE_CXX_FLAGS}")
   set(SANITIZER_COMMON_SUPPORTED_DARWIN_OS osx)
-  if (IOSSIM_SDK_DIR)
+  if (IOSSIM_SDK_DIR AND NOT MACOSX_VERSION_MIN_FLAG)
     list(APPEND SANITIZER_COMMON_SUPPORTED_DARWIN_OS iossim)
   endif()
 
@@ -248,17 +312,6 @@ filter_available_targets(UBSAN_SUPPORTED_ARCH x86_64 i386)
 
 add_subdirectory(include)
 
-# When ANDROID, we build tests with the host compiler (i.e. CMAKE_C_COMPILER),
-# and run tests with tools from the host toolchain.
-if (NOT ANDROID)
-  set(SANITIZER_COMMON_LIT_TEST_DEPS
-    clang clang-headers FileCheck count not llvm-nm llvm-symbolizer
-    compiler-rt-headers)
-  if(UNIX)
-    list(APPEND SANITIZER_COMMON_LIT_TEST_DEPS SanitizerLintCheck)
-  endif()
-endif()
-
 set(COMPILER_RT_LIBCXX_PATH ${LLVM_MAIN_SRC_DIR}/projects/libcxx)
 if(EXISTS ${COMPILER_RT_LIBCXX_PATH}/)
   set(COMPILER_RT_HAS_LIBCXX_SOURCES TRUE)
@@ -268,7 +321,7 @@ endif()
 
 add_subdirectory(lib)
 
-if(LLVM_INCLUDE_TESTS)
+if(COMPILER_RT_INCLUDE_TESTS)
   add_subdirectory(unittests)
 endif()
 add_subdirectory(test)

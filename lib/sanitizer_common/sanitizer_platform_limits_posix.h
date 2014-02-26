@@ -1100,6 +1100,9 @@ namespace __sanitizer {
 #if HAVE_EOWNERDEAD
   extern const int errno_EOWNERDEAD;
 #endif
+
+  extern const int si_SEGV_MAPERR;
+  extern const int si_SEGV_ACCERR;
 }  // namespace __sanitizer
 
 #define CHECK_TYPE_SIZE(TYPE) \

@@ -2,20 +2,15 @@
 
 include_directories(..)
 
+set(TSAN_CFLAGS ${SANITIZER_COMMON_CFLAGS})
 # SANITIZER_COMMON_CFLAGS contains -fPIC, but it's performance-critical for
 # TSan runtime to be built with -fPIE to reduce the number of register spills.
-set(TSAN_CFLAGS
-  ${SANITIZER_COMMON_CFLAGS}
-  -fPIE
-  -fno-rtti)
+append_if(TSAN_CFLAGS COMPILER_RT_HAS_FPIE_FLAG -fPIE)
+append_no_rtti_flag(TSAN_CFLAGS)
 
 set(TSAN_RTL_CFLAGS ${TSAN_CFLAGS})
-if(SUPPORTS_FRAME_LARGER_THAN_FLAG)
-  list(APPEND TSAN_RTL_CFLAGS -Wframe-larger-than=512)
-endif()
-if(SUPPORTS_GLOBAL_CONSTRUCTORS_FLAG)
-  list(APPEND TSAN_RTL_CFLAGS -Wglobal-constructors)
-endif()
+append_if(TSAN_RTL_CFLAGS COMPILER_RT_HAS_WFRAME_LARGER_THAN_FLAG -Wframe-larger-than=512)
+append_if(TSAN_RTL_CFLAGS COMPILER_RT_HAS_WGLOBAL_CONSTRUCTORS_FLAG -Wglobal-constructors)
 # FIXME: Add support for --sysroot=. compile flag:
 
 if("${CMAKE_BUILD_TYPE}" EQUAL "Release")
@@ -56,6 +51,30 @@ elseif(UNIX)
     rtl/tsan_platform_linux.cc)
 endif()
 
+set(TSAN_HEADERS
+  rtl/tsan_clock.h
+  rtl/tsan_defs.h
+  rtl/tsan_fd.h
+  rtl/tsan_flags.h
+  rtl/tsan_ignoreset.h
+  rtl/tsan_interface_ann.h
+  rtl/tsan_interface.h
+  rtl/tsan_interface_inl.h
+  rtl/tsan_interface_java.h
+  rtl/tsan_mman.h
+  rtl/tsan_mutex.h
+  rtl/tsan_mutexset.h
+  rtl/tsan_platform.h
+  rtl/tsan_report.h
+  rtl/tsan_rtl.h
+  rtl/tsan_stat.h
+  rtl/tsan_suppressions.h
+  rtl/tsan_symbolize.h
+  rtl/tsan_sync.h
+  rtl/tsan_trace.h
+  rtl/tsan_update_shadow_word_inl.h
+  rtl/tsan_vector.h)
+
 add_custom_target(tsan)
 # TSan is currently supported on 64-bit Linux only.
 if(CAN_TARGET_x86_64 AND UNIX AND NOT APPLE)
@@ -76,6 +95,8 @@ if(CAN_TARGET_x86_64 AND UNIX AND NOT APPLE)
     clang_rt.tsan-${arch}-symbols)
 endif()
 
-if(LLVM_INCLUDE_TESTS)
+add_dependencies(compiler-rt tsan)
+
+if(COMPILER_RT_INCLUDE_TESTS)
   add_subdirectory(tests)
 endif()

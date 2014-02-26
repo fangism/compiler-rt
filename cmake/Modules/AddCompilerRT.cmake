@@ -58,7 +58,6 @@ macro(add_compiler_rt_static_runtime name arch)
     # Add installation command.
     install(TARGETS ${name}
       ARCHIVE DESTINATION ${COMPILER_RT_LIBRARY_INSTALL_DIR})
-    add_dependencies(compiler-rt ${name})
   else()
     message(FATAL_ERROR "Archtecture ${arch} can't be targeted")
   endif()
@@ -81,7 +80,6 @@ macro(add_compiler_rt_osx_static_runtime name)
     ARCHIVE_OUTPUT_DIRECTORY ${COMPILER_RT_LIBRARY_OUTPUT_DIR})
   install(TARGETS ${name}
     ARCHIVE DESTINATION ${COMPILER_RT_LIBRARY_INSTALL_DIR})
-  add_dependencies(compiler-rt ${name})
 endmacro()
 
 # Adds dynamic runtime library on osx/iossim, which supports multiple
@@ -104,7 +102,6 @@ macro(add_compiler_rt_darwin_dynamic_runtime name os)
     LIBRARY_OUTPUT_DIRECTORY ${COMPILER_RT_LIBRARY_OUTPUT_DIR})
   install(TARGETS ${name}
     LIBRARY DESTINATION ${COMPILER_RT_LIBRARY_INSTALL_DIR})
-  add_dependencies(compiler-rt ${name})
 endmacro()
 
 # Unittests support.
@@ -116,8 +113,8 @@ set(COMPILER_RT_GTEST_INCLUDE_CFLAGS
   -I${COMPILER_RT_GTEST_PATH}
 )
 
-# Use Clang to link objects into a single executable with just-built
-# Clang, using specific link flags. Make executable a part of provided
+# Link objects into a single executable with COMPILER_RT_TEST_COMPILER,
+# using specified link flags. Make executable a part of provided
 # test_suite.
 # add_compiler_rt_test(<test_suite> <test_name>
 #                      OBJECTS <object files>
@@ -126,20 +123,24 @@ set(COMPILER_RT_GTEST_INCLUDE_CFLAGS
 macro(add_compiler_rt_test test_suite test_name)
   parse_arguments(TEST "OBJECTS;DEPS;LINK_FLAGS" "" ${ARGN})
   set(output_bin "${CMAKE_CURRENT_BINARY_DIR}/${test_name}")
+  # Use host compiler in a standalone build, and just-built Clang otherwise.
+  if(NOT COMPILER_RT_STANDALONE_BUILD)
+    list(APPEND TEST_DEPS clang)
+  endif()
   add_custom_target(${test_name}
-    COMMAND clang ${TEST_OBJECTS} -o "${output_bin}"
+    COMMAND ${COMPILER_RT_TEST_COMPILER} ${TEST_OBJECTS} -o "${output_bin}"
             ${TEST_LINK_FLAGS}
-    DEPENDS clang ${TEST_DEPS})
+    DEPENDS ${TEST_DEPS})
   # Make the test suite depend on the binary.
   add_dependencies(${test_suite} ${test_name})
 endmacro()
 
 macro(add_compiler_rt_resource_file target_name file_name)
   set(src_file "${CMAKE_CURRENT_SOURCE_DIR}/${file_name}")
-  set(dst_file "${CLANG_RESOURCE_DIR}/${file_name}")
+  set(dst_file "${COMPILER_RT_OUTPUT_DIR}/${file_name}")
   add_custom_target(${target_name}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${src_file} ${dst_file}
     DEPENDS ${file_name})
   # Install in Clang resource directory.
-  install(FILES ${file_name} DESTINATION ${LIBCLANG_INSTALL_PATH})
+  install(FILES ${file_name} DESTINATION ${COMPILER_RT_INSTALL_PATH})
 endmacro()
