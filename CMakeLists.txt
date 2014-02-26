@@ -26,6 +26,20 @@ else()
   cmake_minimum_required(VERSION 2.8.12.1)
 endif()
 
+# FIXME: It may be removed when we use 2.8.12.
+if(CMAKE_VERSION VERSION_LESS 2.8.12)
+  # Invalidate a couple of keywords.
+  set(cmake_2_8_12_INTERFACE)
+  set(cmake_2_8_12_PRIVATE)
+else()
+  # Use ${cmake_2_8_12_KEYWORD} intead of KEYWORD in target_link_libraries().
+  set(cmake_2_8_12_INTERFACE INTERFACE)
+  set(cmake_2_8_12_PRIVATE PRIVATE)
+  if(POLICY CMP0022)
+    cmake_policy(SET CMP0022 NEW) # automatic when 2.8.12 is required
+  endif()
+endif()
+
 # Top level target used to build all compiler-rt libraries.
 add_custom_target(compiler-rt ALL)
 
@@ -224,6 +238,12 @@ include(config-ix)
 if(COMPILER_RT_ENABLE_WERROR)
   add_definitions_if(COMPILER_RT_HAS_WERROR_FLAG -Werror)
   add_definitions_if(COMPILER_RT_HAS_WX_FLAG /WX)
+endif()
+
+# Emulate C99 and C++11's __func__ for MSVC prior to 2013 CTP.
+CHECK_SYMBOL_EXISTS(__func__ "" COMPILER_RT_HAS_FUNC)
+if(NOT COMPILER_RT_HAS_FUNC)
+  list(APPEND SANITIZER_COMMON_CFLAGS -D__func__=__FUNCTION__)
 endif()
 
 # Provide some common commmandline flags for Sanitizer runtimes.
