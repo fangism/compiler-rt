@@ -303,7 +303,8 @@ if(APPLE)
   endif()
 
   if(COMPILER_RT_USES_LIBCXX)
-    set(SANITIZER_MIN_OSX_VERSION 10.7)
+#    set(SANITIZER_MIN_OSX_VERSION 10.7)
+    set(SANITIZER_MIN_OSX_VERSION ${LLVM_HOST_OSX_VERSION})
   else()
 # set target evrsion = host version for now (may be cache-overridden)
 # this works when SDKROOT is blank
