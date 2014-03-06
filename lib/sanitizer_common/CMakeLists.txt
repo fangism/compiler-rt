@@ -5,6 +5,8 @@ set(SANITIZER_SOURCES
   sanitizer_allocator.cc
   sanitizer_common.cc
   sanitizer_coverage.cc
+  sanitizer_deadlock_detector1.cc
+  sanitizer_deadlock_detector2.cc
   sanitizer_flags.cc
   sanitizer_libc.cc
   sanitizer_libignore.cc
@@ -39,6 +41,7 @@ set(SANITIZER_LIBCDEP_SOURCES
 # included in sanitizer_common source files, but we need to depend on
 # headers when building our custom unit tests.
 set(SANITIZER_HEADERS
+  sanitizer_addrhashmap.h
   sanitizer_allocator.h
   sanitizer_allocator_internal.h
   sanitizer_atomic.h
@@ -52,6 +55,7 @@ set(SANITIZER_HEADERS
   sanitizer_common_interceptors_format.inc
   sanitizer_common_syscalls.inc
   sanitizer_deadlock_detector.h
+  sanitizer_deadlock_detector_interface.h
   sanitizer_flags.h
   sanitizer_internal_defs.h
   sanitizer_lfstack.h

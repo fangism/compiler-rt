@@ -1,4 +1,6 @@
 include(CheckCXXCompilerFlag)
+include(CheckLibraryExists)
+include(CheckSymbolExists)
 
 # CodeGen options.
 check_cxx_compiler_flag(-fPIC                COMPILER_RT_HAS_FPIC_FLAG)
@@ -25,6 +27,7 @@ check_cxx_compiler_flag(-g COMPILER_RT_HAS_G_FLAG)
 check_cxx_compiler_flag(/Zi COMPILER_RT_HAS_Zi_FLAG)
  
 # Warnings.
+check_cxx_compiler_flag(-Wall COMPILER_RT_HAS_WALL_FLAG)
 check_cxx_compiler_flag(-Werror COMPILER_RT_HAS_WERROR_FLAG)
 check_cxx_compiler_flag("-Werror -Wframe-larger-than=512" COMPILER_RT_HAS_WFRAME_LARGER_THAN_FLAG)
 check_cxx_compiler_flag("-Werror -Wglobal-constructors"   COMPILER_RT_HAS_WGLOBAL_CONSTRUCTORS_FLAG)
@@ -35,3 +38,10 @@ check_cxx_compiler_flag("-Werror -Wno-variadic-macros"    COMPILER_RT_HAS_WNO_VA
 
 check_cxx_compiler_flag(/WX COMPILER_RT_HAS_WX_FLAG)
 check_cxx_compiler_flag(/wd4722 COMPILER_RT_HAS_WD4722_FLAG)
+
+# Symbols.
+check_symbol_exists(__func__ "" COMPILER_RT_HAS_FUNC_SYMBOL)
+
+# Libraries.
+check_library_exists(dl dlopen "" COMPILER_RT_HAS_LIBDL)
+check_library_exists(pthread pthread_create "" COMPILER_RT_HAS_LIBPTHREAD)

@@ -51,6 +51,7 @@ if (NOT COMPILER_RT_STANDALONE_BUILD)
          ${PACKAGE_VERSION})
   # Setup the paths where compiler-rt runtimes and headers should be stored.
   set(COMPILER_RT_OUTPUT_DIR ${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION})
+  set(COMPILER_RT_EXEC_OUTPUT_DIR ${LLVM_RUNTIME_OUTPUT_INTDIR})
   set(COMPILER_RT_INSTALL_PATH lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION})
   option(COMPILER_RT_INCLUDE_TESTS "Generate and build compiler-rt unit tests."
          ${LLVM_INCLUDE_TESTS})
@@ -63,6 +64,8 @@ else()
   # Take output dir and install path from the user.
   set(COMPILER_RT_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR} CACHE PATH
     "Path where built compiler-rt libraries should be stored.")
+  set(COMPILER_RT_EXEC_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin CACHE PATH
+    "Path where built compiler-rt executables should be stored.")
   set(COMPILER_RT_INSTALL_PATH ${CMAKE_INSTALL_PREFIX} CACHE PATH
     "Path where built compiler-rt libraries should be installed.")
   option(COMPILER_RT_INCLUDE_TESTS "Generate and build compiler-rt unit tests." OFF)
@@ -71,9 +74,9 @@ else()
   set(COMPILER_RT_TEST_COMPILER ${CMAKE_C_COMPILER})
   set(COMPILER_RT_TEST_COMPILER_ID ${CMAKE_C_COMPILER_ID})
 
-  set(LLVM_CONFIG_PATH "" CACHE PATH "Path to llvm-config binary")
   if (NOT LLVM_CONFIG_PATH)
-    find_program(LLVM_CONFIG_PATH "llvm-config")
+    find_program(LLVM_CONFIG_PATH "llvm-config"
+                 DOC "Path to llvm-config binary")
     if (NOT LLVM_CONFIG_PATH)
       message(FATAL_ERROR "llvm-config not found: specify LLVM_CONFIG_PATH")
     endif()
@@ -235,15 +238,15 @@ pythonize_bool(COMPILER_RT_DEBUG)
 #================================
 include(config-ix)
 
+add_definitions_if(COMPILER_RT_HAS_WALL_FLAG -Wall)
 if(COMPILER_RT_ENABLE_WERROR)
   add_definitions_if(COMPILER_RT_HAS_WERROR_FLAG -Werror)
   add_definitions_if(COMPILER_RT_HAS_WX_FLAG /WX)
 endif()
 
 # Emulate C99 and C++11's __func__ for MSVC prior to 2013 CTP.
-CHECK_SYMBOL_EXISTS(__func__ "" COMPILER_RT_HAS_FUNC)
-if(NOT COMPILER_RT_HAS_FUNC)
-  list(APPEND SANITIZER_COMMON_CFLAGS -D__func__=__FUNCTION__)
+if(NOT COMPILER_RT_HAS_FUNC_SYMBOL)
+  add_definitions(-D__func__=__FUNCTION__)
 endif()
 
 # Provide some common commmandline flags for Sanitizer runtimes.
@@ -257,9 +260,15 @@ append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_STACK_PROTECTOR_FLAG -fno-
 append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FVISIBILITY_HIDDEN_FLAG -fvisibility=hidden)
 append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_FUNCTION_SECTIONS_FLAG -fno-function-sections)
 
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_MT_FLAG /MT)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_Oy_FLAG /Oy-)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_GS_FLAG /GS-)
+if(MSVC)
+  # Remove /MD flag so that it doesn't conflict with /MT.
+  if(COMPILER_RT_HAS_MT_FLAG)
+    string(REGEX REPLACE "(^| ) */MD *( |$)" "\\1 \\2" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    list(APPEND SANITIZER_COMMON_CFLAGS /MT)
+  endif()
+  append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_Oy_FLAG /Oy-)
+  append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_GS_FLAG /GS-)
+endif()
 
 # Build with optimization, unless we're in debug mode.
 if(NOT COMPILER_RT_DEBUG)

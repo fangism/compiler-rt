@@ -38,7 +38,11 @@
 #endif // _WIN32
 
 #ifndef COMMON_INTERCEPTOR_INITIALIZE_RANGE
-#define COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, p, size) {}
+#define COMMON_INTERCEPTOR_INITIALIZE_RANGE(p, size) {}
+#endif
+
+#ifndef COMMON_INTERCEPTOR_UNPOISON_PARAM
+#define COMMON_INTERCEPTOR_UNPOISON_PARAM(count) {}
 #endif
 
 #ifndef COMMON_INTERCEPTOR_FD_ACCESS
@@ -67,8 +71,7 @@ INTERCEPTOR(char*, textdomain, const char *domainname) {
   COMMON_INTERCEPTOR_ENTER(ctx, textdomain, domainname);
   char* domain = REAL(textdomain)(domainname);
   if (domain) {
-    COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, domain,
-        REAL(strlen)(domain) + 1);
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(domain, REAL(strlen)(domain) + 1);
   }
   return domain;
 }
@@ -161,6 +164,34 @@ INTERCEPTOR(int, strncasecmp, const char *s1, const char *s2, SIZE_T n) {
 #else
 #define INIT_STRCASECMP
 #define INIT_STRNCASECMP
+#endif
+
+#if SANITIZER_INTERCEPT_MEMCHR
+INTERCEPTOR(void*, memchr, const void *s, int c, SIZE_T n) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, memchr, s, c, n);
+  void *res = REAL(memchr)(s, c, n);
+  uptr len = res ? (char*)res - (char*)s + 1 : n;
+  COMMON_INTERCEPTOR_READ_RANGE(ctx, s, len);
+  return res;
+}
+
+#define INIT_MEMCHR COMMON_INTERCEPT_FUNCTION(memchr)
+#else
+#define INIT_MEMCHR
+#endif
+
+#if SANITIZER_INTERCEPT_MEMRCHR
+INTERCEPTOR(void*, memrchr, const void *s, int c, SIZE_T n) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, memrchr, s, c, n);
+  COMMON_INTERCEPTOR_READ_RANGE(ctx, s, n);
+  return REAL(memrchr)(s, c, n);
+}
+
+#define INIT_MEMRCHR COMMON_INTERCEPT_FUNCTION(memrchr)
+#else
+#define INIT_MEMRCHR
 #endif
 
 #if SANITIZER_INTERCEPT_FREXP
@@ -452,7 +483,7 @@ static void unpoison_tm(void *ctx, __sanitizer_tm *tm) {
   if (tm->tm_zone) {
     // Can not use COMMON_INTERCEPTOR_WRITE_RANGE here, because tm->tm_zone
     // can point to shared memory and tsan would report a data race.
-    COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, tm->tm_zone,
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(tm->tm_zone,
                                         REAL(strlen(tm->tm_zone)) + 1);
   }
 }
@@ -1041,33 +1072,32 @@ static void unpoison_glob_t(void *ctx, __sanitizer_glob_t *pglob) {
 }
 
 static THREADLOCAL __sanitizer_glob_t *pglob_copy;
-static THREADLOCAL void *glob_ctx;
 
 static void wrapped_gl_closedir(void *dir) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(glob_ctx, 1);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(1);
   IndirectExternCall(pglob_copy->gl_closedir)(dir);
 }
 
 static void *wrapped_gl_readdir(void *dir) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(glob_ctx, 1);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(1);
   return IndirectExternCall(pglob_copy->gl_readdir)(dir);
 }
 
 static void *wrapped_gl_opendir(const char *s) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(glob_ctx, 1);
-  COMMON_INTERCEPTOR_WRITE_RANGE(glob_ctx, s, REAL(strlen)(s) + 1);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(1);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(s, REAL(strlen)(s) + 1);
   return IndirectExternCall(pglob_copy->gl_opendir)(s);
 }
 
 static int wrapped_gl_lstat(const char *s, void *st) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(glob_ctx, 2);
-  COMMON_INTERCEPTOR_WRITE_RANGE(glob_ctx, s, REAL(strlen)(s) + 1);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(2);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(s, REAL(strlen)(s) + 1);
   return IndirectExternCall(pglob_copy->gl_lstat)(s, st);
 }
 
 static int wrapped_gl_stat(const char *s, void *st) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(glob_ctx, 2);
-  COMMON_INTERCEPTOR_WRITE_RANGE(glob_ctx, s, REAL(strlen)(s) + 1);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(2);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(s, REAL(strlen)(s) + 1);
   return IndirectExternCall(pglob_copy->gl_stat)(s, st);
 }
 
@@ -1087,7 +1117,6 @@ INTERCEPTOR(int, glob, const char *pattern, int flags,
     Swap(pglob->gl_lstat, glob_copy.gl_lstat);
     Swap(pglob->gl_stat, glob_copy.gl_stat);
     pglob_copy = &glob_copy;
-    glob_ctx = ctx;
   }
   int res = REAL(glob)(pattern, flags, errfunc, pglob);
   if (flags & glob_altdirfunc) {
@@ -1098,7 +1127,6 @@ INTERCEPTOR(int, glob, const char *pattern, int flags,
     Swap(pglob->gl_stat, glob_copy.gl_stat);
   }
   pglob_copy = 0;
-  glob_ctx = 0;
   if ((!res || res == glob_nomatch) && pglob) unpoison_glob_t(ctx, pglob);
   return res;
 }
@@ -1119,7 +1147,6 @@ INTERCEPTOR(int, glob64, const char *pattern, int flags,
     Swap(pglob->gl_lstat, glob_copy.gl_lstat);
     Swap(pglob->gl_stat, glob_copy.gl_stat);
     pglob_copy = &glob_copy;
-    glob_ctx = ctx;
   }
   int res = REAL(glob64)(pattern, flags, errfunc, pglob);
   if (flags & glob_altdirfunc) {
@@ -1130,7 +1157,6 @@ INTERCEPTOR(int, glob64, const char *pattern, int flags,
     Swap(pglob->gl_stat, glob_copy.gl_stat);
   }
   pglob_copy = 0;
-  glob_ctx = 0;
   if ((!res || res == glob_nomatch) && pglob) unpoison_glob_t(ctx, pglob);
   return res;
 }
@@ -2021,7 +2047,7 @@ INTERCEPTOR(char *, strerror, int errnum) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, strerror, errnum);
   char *res = REAL(strerror)(errnum);
-  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, res, REAL(strlen)(res) + 1);
+  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, REAL(strlen)(res) + 1);
   return res;
 }
 #define INIT_STRERROR COMMON_INTERCEPT_FUNCTION(strerror);
@@ -2077,23 +2103,22 @@ typedef int (*scandir_filter_f)(const struct __sanitizer_dirent *);
 typedef int (*scandir_compar_f)(const struct __sanitizer_dirent **,
                                 const struct __sanitizer_dirent **);
 
-static THREADLOCAL void *scandir_ctx;
 static THREADLOCAL scandir_filter_f scandir_filter;
 static THREADLOCAL scandir_compar_f scandir_compar;
 
 static int wrapped_scandir_filter(const struct __sanitizer_dirent *dir) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(scandir_ctx, 1);
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir_ctx, dir, dir->d_reclen);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(1);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(dir, dir->d_reclen);
   return IndirectExternCall(scandir_filter)(dir);
 }
 
 static int wrapped_scandir_compar(const struct __sanitizer_dirent **a,
                                   const struct __sanitizer_dirent **b) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(scandir_ctx, 2);
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir_ctx, a, sizeof(*a));
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir_ctx, *a, (*a)->d_reclen);
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir_ctx, b, sizeof(*b));
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir_ctx, *b, (*b)->d_reclen);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(2);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(a, sizeof(*a));
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(*a, (*a)->d_reclen);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(b, sizeof(*b));
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(*b, (*b)->d_reclen);
   return IndirectExternCall(scandir_compar)(a, b);
 }
 
@@ -2102,13 +2127,10 @@ INTERCEPTOR(int, scandir, char *dirp, __sanitizer_dirent ***namelist,
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, scandir, dirp, namelist, filter, compar);
   if (dirp) COMMON_INTERCEPTOR_READ_RANGE(ctx, dirp, REAL(strlen)(dirp) + 1);
-  CHECK_EQ(0, scandir_ctx);
-  scandir_ctx = ctx;
   scandir_filter = filter;
   scandir_compar = compar;
   int res = REAL(scandir)(dirp, namelist, filter ? wrapped_scandir_filter : 0,
                           compar ? wrapped_scandir_compar : 0);
-  scandir_ctx = 0;
   scandir_filter = 0;
   scandir_compar = 0;
   if (namelist && res > 0) {
@@ -2130,23 +2152,22 @@ typedef int (*scandir64_filter_f)(const struct __sanitizer_dirent64 *);
 typedef int (*scandir64_compar_f)(const struct __sanitizer_dirent64 **,
                                   const struct __sanitizer_dirent64 **);
 
-static THREADLOCAL void *scandir64_ctx;
 static THREADLOCAL scandir64_filter_f scandir64_filter;
 static THREADLOCAL scandir64_compar_f scandir64_compar;
 
 static int wrapped_scandir64_filter(const struct __sanitizer_dirent64 *dir) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(scandir64_ctx, 1);
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir64_ctx, dir, dir->d_reclen);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(1);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(dir, dir->d_reclen);
   return IndirectExternCall(scandir64_filter)(dir);
 }
 
 static int wrapped_scandir64_compar(const struct __sanitizer_dirent64 **a,
                                     const struct __sanitizer_dirent64 **b) {
-  COMMON_INTERCEPTOR_UNPOISON_PARAM(scandir64_ctx, 2);
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir64_ctx, a, sizeof(*a));
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir64_ctx, *a, (*a)->d_reclen);
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir64_ctx, b, sizeof(*b));
-  COMMON_INTERCEPTOR_WRITE_RANGE(scandir64_ctx, *b, (*b)->d_reclen);
+  COMMON_INTERCEPTOR_UNPOISON_PARAM(2);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(a, sizeof(*a));
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(*a, (*a)->d_reclen);
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(b, sizeof(*b));
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(*b, (*b)->d_reclen);
   return IndirectExternCall(scandir64_compar)(a, b);
 }
 
@@ -2155,14 +2176,11 @@ INTERCEPTOR(int, scandir64, char *dirp, __sanitizer_dirent64 ***namelist,
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, scandir64, dirp, namelist, filter, compar);
   if (dirp) COMMON_INTERCEPTOR_READ_RANGE(ctx, dirp, REAL(strlen)(dirp) + 1);
-  CHECK_EQ(0, scandir64_ctx);
-  scandir64_ctx = ctx;
   scandir64_filter = filter;
   scandir64_compar = compar;
   int res =
       REAL(scandir64)(dirp, namelist, filter ? wrapped_scandir64_filter : 0,
                       compar ? wrapped_scandir64_compar : 0);
-  scandir64_ctx = 0;
   scandir64_filter = 0;
   scandir64_compar = 0;
   if (namelist && res > 0) {
@@ -2433,50 +2451,107 @@ INTERCEPTOR(int, pthread_mutex_unlock, void *m) {
 #endif
 
 #if SANITIZER_INTERCEPT_PTHREAD_COND
-INTERCEPTOR(int, pthread_cond_wait, void *c, void *m) {
+// nptl implementation of pthread_cond has 2 versions (2.2.5 and 2.3.2).
+// pthread_cond_t has different size in the different versions.
+// We can't simply always call new REAL functions from interceptors,
+// because they will corrupt memory after pthread_cond_t (old cond is smaller).
+// We can't simply always call old REAL functions from interceptors,
+// because they do not support all the features (e.g. waiting against
+// CLOCK_REALTIME).
+// Proper handling would require to have 2 versions of interceptors as well.
+// But this is messy, in particular requires linker scripts when sanitizer
+// runtime is linked into a shared library.
+// Instead we do the following trick.
+static void *init_cond(void *c, bool force = false) {
+  // sizeof(pthread_cond_t) >= sizeof(uptr) in both versions.
+  // So we allocate additional memory on the side large enough to hold
+  // any pthread_cond_t object. Always call new REAL functions, but pass
+  // the aux object to them.
+  // Note: the code assumes that PTHREAD_COND_INITIALIZER initializes
+  // first word of pthread_cond_t to zero.
+  // It's all relevant only for linux.
+  if (!SI_LINUX_NOT_ANDROID)
+    return c;
+  atomic_uintptr_t *p = (atomic_uintptr_t*)c;
+  uptr cond = atomic_load(p, memory_order_acquire);
+  if (!force && cond != 0)
+    return (void*)cond;
+  void *newcond = WRAP(malloc)(pthread_cond_t_sz);
+  internal_memset(newcond, 0, pthread_cond_t_sz);
+  if (atomic_compare_exchange_strong(p, &cond, (uptr)newcond,
+      memory_order_acq_rel))
+    return newcond;
+  WRAP(free)(newcond);
+  return (void*)cond;
+}
+
+INTERCEPTOR(int, pthread_cond_init, void *c, void *a) {
+  void *cond = init_cond(c, true);
   void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_wait, c, m);
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_init, cond, a);
+  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, c, sizeof(uptr));
+  return REAL(pthread_cond_init)(cond, a);
+}
+
+INTERCEPTOR(int, pthread_cond_wait, void *c, void *m) {
+  void *cond = init_cond(c);
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_wait, cond, m);
   COMMON_INTERCEPTOR_MUTEX_UNLOCK(ctx, m);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, pthread_cond_t_sz);
-  int res = REAL(pthread_cond_wait)(c, m);
+  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
+  int res = REAL(pthread_cond_wait)(cond, m);
   COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m);
   return res;
 }
 
-INTERCEPTOR(int, pthread_cond_init, void *c, void *a) {
+INTERCEPTOR(int, pthread_cond_timedwait, void *c, void *m, void *abstime) {
+  void *cond = init_cond(c);
   void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_init, c, a);
-  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, c, pthread_cond_t_sz);
-  return REAL(pthread_cond_init)(c, a);
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_timedwait, cond, m, abstime);
+  COMMON_INTERCEPTOR_MUTEX_UNLOCK(ctx, m);
+  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
+  int res = REAL(pthread_cond_timedwait)(cond, m, abstime);
+  COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m);
+  return res;
 }
 
 INTERCEPTOR(int, pthread_cond_signal, void *c) {
+  void *cond = init_cond(c);
   void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_signal, c);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, pthread_cond_t_sz);
-  return REAL(pthread_cond_signal)(c);
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_signal, cond);
+  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
+  return REAL(pthread_cond_signal)(cond);
 }
 
 INTERCEPTOR(int, pthread_cond_broadcast, void *c) {
+  void *cond = init_cond(c);
   void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_broadcast, c);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, pthread_cond_t_sz);
-  return REAL(pthread_cond_broadcast)(c);
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_broadcast, cond);
+  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
+  return REAL(pthread_cond_broadcast)(cond);
 }
 
-#define INIT_PTHREAD_COND_WAIT \
-  INTERCEPT_FUNCTION_VER(pthread_cond_wait, "GLIBC_2.3.2")
-#define INIT_PTHREAD_COND_INIT \
-  INTERCEPT_FUNCTION_VER(pthread_cond_init, "GLIBC_2.3.2")
-#define INIT_PTHREAD_COND_SIGNAL \
-  INTERCEPT_FUNCTION_VER(pthread_cond_signal, "GLIBC_2.3.2")
-#define INIT_PTHREAD_COND_BROADCAST \
-  INTERCEPT_FUNCTION_VER(pthread_cond_broadcast, "GLIBC_2.3.2")
+INTERCEPTOR(int, pthread_cond_destroy, void *c) {
+  void *cond = init_cond(c);
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_destroy, cond);
+  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, c, sizeof(uptr));
+  int res = REAL(pthread_cond_destroy)(cond);
+  // Free our aux cond and zero the pointer to not leave dangling pointers.
+  WRAP(free)(cond);
+  atomic_store((atomic_uintptr_t*)c, 0, memory_order_relaxed);
+  return res;
+}
+
+#define INIT_PTHREAD_COND \
+  INTERCEPT_FUNCTION_VER(pthread_cond_init, "GLIBC_2.3.2"); \
+  INTERCEPT_FUNCTION_VER(pthread_cond_signal, "GLIBC_2.3.2"); \
+  INTERCEPT_FUNCTION_VER(pthread_cond_broadcast, "GLIBC_2.3.2"); \
+  INTERCEPT_FUNCTION_VER(pthread_cond_wait, "GLIBC_2.3.2"); \
+  INTERCEPT_FUNCTION_VER(pthread_cond_timedwait, "GLIBC_2.3.2"); \
+  INTERCEPT_FUNCTION_VER(pthread_cond_destroy, "GLIBC_2.3.2")
 #else
-#define INIT_PTHREAD_COND_WAIT
-#define INIT_PTHREAD_COND_INIT
-#define INIT_PTHREAD_COND_SIGNAL
-#define INIT_PTHREAD_COND_BROADCAST
+#define INIT_PTHREAD_COND
 #endif
 
 #if SANITIZER_INTERCEPT_GETMNTENT || SANITIZER_INTERCEPT_GETMNTENT_R
@@ -2635,7 +2710,7 @@ INTERCEPTOR(char *, ether_ntoa, __sanitizer_ether_addr *addr) {
   COMMON_INTERCEPTOR_ENTER(ctx, ether_ntoa, addr);
   if (addr) COMMON_INTERCEPTOR_READ_RANGE(ctx, addr, sizeof(*addr));
   char *res = REAL(ether_ntoa)(addr);
-  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, res, REAL(strlen)(res) + 1);
+  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, REAL(strlen)(res) + 1);
   return res;
 }
 INTERCEPTOR(__sanitizer_ether_addr *, ether_aton, char *buf) {
@@ -2643,7 +2718,7 @@ INTERCEPTOR(__sanitizer_ether_addr *, ether_aton, char *buf) {
   COMMON_INTERCEPTOR_ENTER(ctx, ether_aton, buf);
   if (buf) COMMON_INTERCEPTOR_READ_RANGE(ctx, buf, REAL(strlen)(buf) + 1);
   __sanitizer_ether_addr *res = REAL(ether_aton)(buf);
-  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, res, sizeof(*res));
+  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, sizeof(*res));
   return res;
 }
 INTERCEPTOR(int, ether_ntohost, char *hostname, __sanitizer_ether_addr *addr) {
@@ -2835,7 +2910,7 @@ INTERCEPTOR(char *, tmpnam, char *s) {
     if (s)
       COMMON_INTERCEPTOR_WRITE_RANGE(ctx, s, REAL(strlen)(s) + 1);
     else
-      COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, res, REAL(strlen)(res) + 1);
+      COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, REAL(strlen)(res) + 1);
   }
   return res;
 }
@@ -2864,7 +2939,7 @@ INTERCEPTOR(char *, tempnam, char *dir, char *pfx) {
   if (dir) COMMON_INTERCEPTOR_READ_RANGE(ctx, dir, REAL(strlen)(dir) + 1);
   if (pfx) COMMON_INTERCEPTOR_READ_RANGE(ctx, pfx, REAL(strlen)(pfx) + 1);
   char *res = REAL(tempnam)(dir, pfx);
-  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, res, REAL(strlen)(res) + 1);
+  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, REAL(strlen)(res) + 1);
   return res;
 }
 #define INIT_TEMPNAM COMMON_INTERCEPT_FUNCTION(tempnam);
@@ -3307,6 +3382,8 @@ INTERCEPTOR(int, capset, void *hdrp, const void *datap) {
   INIT_STRNCMP;                            \
   INIT_STRCASECMP;                         \
   INIT_STRNCASECMP;                        \
+  INIT_MEMCHR;                             \
+  INIT_MEMRCHR;                            \
   INIT_READ;                               \
   INIT_PREAD;                              \
   INIT_PREAD64;                            \
@@ -3387,10 +3464,7 @@ INTERCEPTOR(int, capset, void *hdrp, const void *datap) {
   INIT__EXIT;                              \
   INIT_PTHREAD_MUTEX_LOCK;                 \
   INIT_PTHREAD_MUTEX_UNLOCK;               \
-  INIT_PTHREAD_COND_WAIT;                  \
-  INIT_PTHREAD_COND_INIT;                  \
-  INIT_PTHREAD_COND_SIGNAL;                \
-  INIT_PTHREAD_COND_BROADCAST;             \
+  INIT_PTHREAD_COND;                       \
   INIT_GETMNTENT;                          \
   INIT_GETMNTENT_R;                        \
   INIT_STATFS;                             \

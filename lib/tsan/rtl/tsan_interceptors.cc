@@ -632,20 +632,6 @@ TSAN_INTERCEPTOR(int, memcmp, const void *s1, const void *s2, uptr n) {
   return res;
 }
 
-TSAN_INTERCEPTOR(void*, memchr, void *s, int c, uptr n) {
-  SCOPED_TSAN_INTERCEPTOR(memchr, s, c, n);
-  void *res = REAL(memchr)(s, c, n);
-  uptr len = res ? (char*)res - (char*)s + 1 : n;
-  MemoryAccessRange(thr, pc, (uptr)s, len, false);
-  return res;
-}
-
-TSAN_INTERCEPTOR(void*, memrchr, char *s, int c, uptr n) {
-  SCOPED_TSAN_INTERCEPTOR(memrchr, s, c, n);
-  MemoryAccessRange(thr, pc, (uptr)s, n, false);
-  return REAL(memrchr)(s, c, n);
-}
-
 TSAN_INTERCEPTOR(void*, memmove, void *dst, void *src, uptr n) {
   SCOPED_TSAN_INTERCEPTOR(memmove, dst, src, n);
   MemoryAccessRange(thr, pc, (uptr)dst, n, true);
@@ -1092,23 +1078,6 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_unlock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_unlock, m);
   MutexReadOrWriteUnlock(thr, pc, (uptr)m);
   int res = REAL(pthread_rwlock_unlock)(m);
-  return res;
-}
-
-TSAN_INTERCEPTOR(int, pthread_cond_destroy, void *c) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_cond_destroy, c);
-  MemoryWrite(thr, pc, (uptr)c, kSizeLog1);
-  int res = REAL(pthread_cond_destroy)(c);
-  return res;
-}
-
-TSAN_INTERCEPTOR(int, pthread_cond_timedwait, void *c, void *m,
-    void *abstime) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_cond_timedwait, c, m, abstime);
-  MutexUnlock(thr, pc, (uptr)m);
-  MemoryRead(thr, pc, (uptr)c, kSizeLog1);
-  int res = REAL(pthread_cond_timedwait)(c, m, abstime);
-  MutexLock(thr, pc, (uptr)m);
   return res;
 }
 
@@ -1903,6 +1872,23 @@ TSAN_INTERCEPTOR(int, fork, int fake) {
   return pid;
 }
 
+TSAN_INTERCEPTOR(int, vfork, int fake) {
+  // Some programs (e.g. openjdk) call close for all file descriptors
+  // in the child process. Under tsan it leads to false positives, because
+  // address space is shared, so the parent process also thinks that
+  // the descriptors are closed (while they are actually not).
+  // This leads to false positives due to missed synchronization.
+  // Strictly saying this is undefined behavior, because vfork child is not
+  // allowed to call any functions other than exec/exit. But this is what
+  // openjdk does, so we want to handle it.
+  // We could disable interceptors in the child process. But it's not possible
+  // to simply intercept and wrap vfork, because vfork child is not allowed
+  // to return from the function that calls vfork, and that's exactly what
+  // we would do. So this would require some assembly trickery as well.
+  // Instead we simply turn vfork into fork.
+  return WRAP(fork)(fake);
+}
+
 static int OnExit(ThreadState *thr) {
   int status = Finalize(thr);
   REAL(fflush)(0);
@@ -1928,9 +1914,6 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 #undef SANITIZER_INTERCEPT_GETADDRINFO
 
 #define COMMON_INTERCEPT_FUNCTION(name) INTERCEPT_FUNCTION(name)
-#define COMMON_INTERCEPTOR_UNPOISON_PARAM(ctx, count) \
-  do {                                                \
-  } while (false)
 
 #define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size)                    \
   MemoryAccessRange(((TsanInterceptorContext *)ctx)->thr,                 \
@@ -2162,8 +2145,6 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(strlen);
   TSAN_INTERCEPT(memset);
   TSAN_INTERCEPT(memcpy);
-  TSAN_INTERCEPT(memchr);
-  TSAN_INTERCEPT(memrchr);
   TSAN_INTERCEPT(memmove);
   TSAN_INTERCEPT(memcmp);
   TSAN_INTERCEPT(strchr);
@@ -2198,9 +2179,6 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(pthread_rwlock_trywrlock);
   TSAN_INTERCEPT(pthread_rwlock_timedwrlock);
   TSAN_INTERCEPT(pthread_rwlock_unlock);
-
-  INTERCEPT_FUNCTION_VER(pthread_cond_destroy, "GLIBC_2.3.2");
-  INTERCEPT_FUNCTION_VER(pthread_cond_timedwait, "GLIBC_2.3.2");
 
   TSAN_INTERCEPT(pthread_barrier_init);
   TSAN_INTERCEPT(pthread_barrier_destroy);
@@ -2289,6 +2267,7 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(munlockall);
 
   TSAN_INTERCEPT(fork);
+  TSAN_INTERCEPT(vfork);
   TSAN_INTERCEPT(dlopen);
   TSAN_INTERCEPT(dlclose);
   TSAN_INTERCEPT(on_exit);
