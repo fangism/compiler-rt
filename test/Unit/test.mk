@@ -9,10 +9,10 @@
 # CXXLIB - link libstdc++ or libc++
 
 COMPILER_RT_SRCDIR = $(LLVM_SRCDIR)/projects/compiler-rt
-VPATH = $(COMPILER_RT_SRCDIR)/test/Unit
+VPATH = $(COMPILER_RT_SRCDIR)/test/builtins/Unit
 LIBDIR = ../../../lib
 DEFAULT_CFLAGS = -Os -nodefaultlibs
-DEFAULT_CPPFLAGS = -I$(COMPILER_RT_SRCDIR)/lib
+DEFAULT_CPPFLAGS = -I$(COMPILER_RT_SRCDIR)/lib/builtins
 TEST_LIBDIR = $(LIBDIR)/clang/$(VERSION)/lib/$(OS)
 # LDFLAGS = -L$(TEST_LIBDIR)
 TEST_LIB = $(TEST_LIBDIR)/libclang_rt.$(ARCH).a
