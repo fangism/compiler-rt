@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include <sanitizer_common/sanitizer_deadlock_detector_interface.h>
+#include <sanitizer_common/sanitizer_stackdepot.h>
 
 #include "tsan_rtl.h"
 #include "tsan_flags.h"
@@ -141,7 +142,8 @@ void MutexLock(ThreadState *thr, uptr pc, uptr addr, int rec, bool try_lock) {
   thr->mset.Add(s->GetId(), true, thr->fast_state.epoch());
   if (flags()->detect_deadlocks && s->recursion == 1) {
     Callback cb(thr, pc);
-    ctx->dd->MutexBeforeLock(&cb, &s->dd, true);
+    if (!try_lock)
+      ctx->dd->MutexBeforeLock(&cb, &s->dd, true);
     ctx->dd->MutexAfterLock(&cb, &s->dd, true, try_lock);
   }
   s->mtx.Unlock();
@@ -216,7 +218,8 @@ void MutexReadLock(ThreadState *thr, uptr pc, uptr addr, bool trylock) {
   thr->mset.Add(s->GetId(), false, thr->fast_state.epoch());
   if (flags()->detect_deadlocks && s->recursion == 0) {
     Callback cb(thr, pc);
-    ctx->dd->MutexBeforeLock(&cb, &s->dd, false);
+    if (!trylock)
+      ctx->dd->MutexBeforeLock(&cb, &s->dd, false);
     ctx->dd->MutexAfterLock(&cb, &s->dd, false, trylock);
   }
   s->mtx.ReadUnlock();
@@ -416,6 +419,7 @@ void AcquireReleaseImpl(ThreadState *thr, uptr pc, SyncClock *c) {
 }
 
 void ReportDeadlock(ThreadState *thr, uptr pc, DDReport *r) {
+#ifndef TSAN_GO
   if (r == 0)
     return;
   Context *ctx = CTX();
@@ -423,10 +427,19 @@ void ReportDeadlock(ThreadState *thr, uptr pc, DDReport *r) {
   ScopedReport rep(ReportTypeDeadlock);
   for (int i = 0; i < r->n; i++)
     rep.AddMutex(r->loop[i].mtx_ctx0);
-  StackTrace trace;
-  trace.ObtainCurrent(thr, pc);
-  rep.AddStack(&trace);
+  StackTrace stacks[2 * DDReport::kMaxLoopSize];
+  for (int i = 0; i < r->n; i++) {
+    uptr size;
+    for (int j = 0; j < 2; j++) {
+      u32 stk = r->loop[i].stk[j];
+      if (!stk) continue;
+      const uptr *trace = StackDepotGet(stk, &size);
+      stacks[i].Init(const_cast<uptr *>(trace), size);
+      rep.AddStack(&stacks[i]);
+    }
+  }
   OutputReport(ctx, rep);
+#endif  // TSAN_GO
 }
 
 }  // namespace __tsan

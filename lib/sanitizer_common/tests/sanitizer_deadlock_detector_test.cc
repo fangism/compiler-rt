@@ -82,10 +82,10 @@ void RunBasicTest() {
     d.onUnlock(&dtls, n1);
 
     EXPECT_FALSE(d.onLock(&dtls, n2));
+    EXPECT_EQ(0U, d.findPathToLock(&dtls, n1, path, 1));
+    EXPECT_EQ(2U, d.findPathToLock(&dtls, n1, path, 10));
+    EXPECT_EQ(2U, d.findPathToLock(&dtls, n1, path, 2));
     EXPECT_TRUE(d.onLock(&dtls, n1));
-    EXPECT_EQ(0U, d.findPathToHeldLock(&dtls, n1, path, 1));
-    EXPECT_EQ(2U, d.findPathToHeldLock(&dtls, n1, path, 10));
-    EXPECT_EQ(2U, d.findPathToHeldLock(&dtls, n1, path, 2));
     EXPECT_EQ(path[0], n1);
     EXPECT_EQ(path[1], n2);
     EXPECT_EQ(d.getData(n1), 1U);
@@ -113,9 +113,9 @@ void RunBasicTest() {
     d.onUnlock(&dtls, n2);
 
     EXPECT_FALSE(d.onLock(&dtls, n3));
+    EXPECT_EQ(0U, d.findPathToLock(&dtls, n1, path, 2));
+    EXPECT_EQ(3U, d.findPathToLock(&dtls, n1, path, 10));
     EXPECT_TRUE(d.onLock(&dtls, n1));
-    EXPECT_EQ(0U, d.findPathToHeldLock(&dtls, n1, path, 2));
-    EXPECT_EQ(3U, d.findPathToHeldLock(&dtls, n1, path, 10));
     EXPECT_EQ(path[0], n1);
     EXPECT_EQ(path[1], n2);
     EXPECT_EQ(path[2], n3);
@@ -375,4 +375,72 @@ void RunOnFirstLockTest() {
 
 TEST(DeadlockDetector, onFirstLockTest) {
   RunOnFirstLockTest<BV2>();
+}
+
+template <class BV>
+void RunRecusriveLockTest() {
+  ScopedDD<BV> sdd;
+  DeadlockDetector<BV> &d = *sdd.dp;
+  DeadlockDetectorTLS<BV> &dtls = sdd.dtls;
+
+  uptr l0 = d.newNode(0);
+  uptr l1 = d.newNode(0);
+  uptr l2 = d.newNode(0);
+  uptr l3 = d.newNode(0);
+
+  EXPECT_FALSE(d.onLock(&dtls, l0));
+  EXPECT_FALSE(d.onLock(&dtls, l1));
+  EXPECT_FALSE(d.onLock(&dtls, l0));  // Recurisve.
+  EXPECT_FALSE(d.onLock(&dtls, l2));
+  d.onUnlock(&dtls, l0);
+  EXPECT_FALSE(d.onLock(&dtls, l3));
+  d.onUnlock(&dtls, l0);
+  d.onUnlock(&dtls, l1);
+  d.onUnlock(&dtls, l2);
+  d.onUnlock(&dtls, l3);
+  EXPECT_TRUE(d.testOnlyHasEdge(l0, l1));
+  EXPECT_TRUE(d.testOnlyHasEdge(l0, l2));
+  EXPECT_TRUE(d.testOnlyHasEdge(l0, l3));
+}
+
+TEST(DeadlockDetector, RecusriveLockTest) {
+  RunRecusriveLockTest<BV2>();
+}
+
+template <class BV>
+void RunLockContextTest() {
+  ScopedDD<BV> sdd;
+  DeadlockDetector<BV> &d = *sdd.dp;
+  DeadlockDetectorTLS<BV> &dtls = sdd.dtls;
+
+  uptr l0 = d.newNode(0);
+  uptr l1 = d.newNode(0);
+  uptr l2 = d.newNode(0);
+  uptr l3 = d.newNode(0);
+  uptr l4 = d.newNode(0);
+  EXPECT_FALSE(d.onLock(&dtls, l0, 10));
+  EXPECT_FALSE(d.onLock(&dtls, l1, 11));
+  EXPECT_FALSE(d.onLock(&dtls, l2, 12));
+  EXPECT_FALSE(d.onLock(&dtls, l3, 13));
+  EXPECT_EQ(10U, d.findLockContext(&dtls, l0));
+  EXPECT_EQ(11U, d.findLockContext(&dtls, l1));
+  EXPECT_EQ(12U, d.findLockContext(&dtls, l2));
+  EXPECT_EQ(13U, d.findLockContext(&dtls, l3));
+  d.onUnlock(&dtls, l0);
+  EXPECT_EQ(0U, d.findLockContext(&dtls, l0));
+  EXPECT_EQ(11U, d.findLockContext(&dtls, l1));
+  EXPECT_EQ(12U, d.findLockContext(&dtls, l2));
+  EXPECT_EQ(13U, d.findLockContext(&dtls, l3));
+  d.onUnlock(&dtls, l2);
+  EXPECT_EQ(0U, d.findLockContext(&dtls, l0));
+  EXPECT_EQ(11U, d.findLockContext(&dtls, l1));
+  EXPECT_EQ(0U, d.findLockContext(&dtls, l2));
+  EXPECT_EQ(13U, d.findLockContext(&dtls, l3));
+
+  EXPECT_FALSE(d.onLock(&dtls, l4, 14));
+  EXPECT_EQ(14U, d.findLockContext(&dtls, l4));
+}
+
+TEST(DeadlockDetector, LockContextTest) {
+  RunLockContextTest<BV2>();
 }

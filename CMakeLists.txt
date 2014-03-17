@@ -95,7 +95,8 @@ else()
   list(GET CONFIG_OUTPUT 3 LLVM_MAIN_SRC_DIR)
 
   # Make use of LLVM CMake modules.
-  set(LLVM_CMAKE_PATH "${LLVM_BINARY_DIR}/share/llvm/cmake")
+  file(TO_CMAKE_PATH ${LLVM_BINARY_DIR} LLVM_BINARY_DIR_CMAKE_STYLE)
+  set(LLVM_CMAKE_PATH "${LLVM_BINARY_DIR_CMAKE_STYLE}/share/llvm/cmake")
   list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_PATH}")
   # Get some LLVM variables from LLVMConfig.
   include("${LLVM_CMAKE_PATH}/LLVMConfig.cmake")
@@ -172,7 +173,7 @@ endfunction()
 # runtime libraries supported by our current compilers cross-compiling
 # abilities.
 set(SIMPLE_SOURCE ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/simple.c)
-file(WRITE ${SIMPLE_SOURCE} "#include <stdlib.h>\nint main() {}")
+file(WRITE ${SIMPLE_SOURCE} "#include <stdlib.h>\nint main() {}\n")
 
 # test_target_arch(<arch> <target flags...>)
 # Sets the target flags for a given architecture and determines if this
@@ -238,10 +239,14 @@ pythonize_bool(COMPILER_RT_DEBUG)
 #================================
 include(config-ix)
 
-add_definitions_if(COMPILER_RT_HAS_WALL_FLAG -Wall)
+if(MSVC)
+  append_string_if(COMPILER_RT_HAS_W3_FLAG /W3 CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+else()
+  append_string_if(COMPILER_RT_HAS_WALL_FLAG -Wall CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+endif()
 if(COMPILER_RT_ENABLE_WERROR)
-  add_definitions_if(COMPILER_RT_HAS_WERROR_FLAG -Werror)
-  add_definitions_if(COMPILER_RT_HAS_WX_FLAG /WX)
+  append_string_if(COMPILER_RT_HAS_WERROR_FLAG -Werror CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+  append_string_if(COMPILER_RT_HAS_WX_FLAG /WX CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
 endif()
 
 # Emulate C99 and C++11's __func__ for MSVC prior to 2013 CTP.
@@ -250,33 +255,30 @@ if(NOT COMPILER_RT_HAS_FUNC_SYMBOL)
 endif()
 
 # Provide some common commmandline flags for Sanitizer runtimes.
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FPIC_FLAG -fPIC)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_BUILTIN_FLAG -fno-builtin)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_EXCEPTIONS_FLAG -fno-exceptions)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FOMIT_FRAME_POINTER_FLAG -fomit-frame-pointer)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FASYNC_UNWIND_TABLES_FLAG -fasynchronous-unwind-tables)
-# append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FUNWIND_TABLES_FLAG -funwind-tables)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_STACK_PROTECTOR_FLAG -fno-stack-protector)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FVISIBILITY_HIDDEN_FLAG -fvisibility=hidden)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_FNO_FUNCTION_SECTIONS_FLAG -fno-function-sections)
+append_if(COMPILER_RT_HAS_FPIC_FLAG -fPIC SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_FNO_BUILTIN_FLAG -fno-builtin SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_FNO_EXCEPTIONS_FLAG -fno-exceptions SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_FOMIT_FRAME_POINTER_FLAG -fomit-frame-pointer SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_FASYNC_UNWIND_TABLES_FLAG -fasynchronous-unwind-tables SANITIZER_COMMON_CFLAGS)
+# append_if(COMPILER_RT_HAS_FUNWIND_TABLES_FLAG -funwind-tables SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_FNO_STACK_PROTECTOR_FLAG -fno-stack-protector SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_FVISIBILITY_HIDDEN_FLAG -fvisibility=hidden SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_FNO_FUNCTION_SECTIONS_FLAG -fno-function-sections SANITIZER_COMMON_CFLAGS)
 
 if(MSVC)
   # Remove /MD flag so that it doesn't conflict with /MT.
   if(COMPILER_RT_HAS_MT_FLAG)
-    string(REGEX REPLACE "(^| ) */MD *( |$)" "\\1 \\2" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    string(REGEX REPLACE "(^| ) */MDd? *( |$)" "\\1 \\2" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     list(APPEND SANITIZER_COMMON_CFLAGS /MT)
   endif()
-  append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_Oy_FLAG /Oy-)
-  append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_GS_FLAG /GS-)
+  append_if(COMPILER_RT_HAS_Oy_FLAG /Oy- SANITIZER_COMMON_CFLAGS)
+  append_if(COMPILER_RT_HAS_GS_FLAG /GS- SANITIZER_COMMON_CFLAGS)
 endif()
 
-# Build with optimization, unless we're in debug mode.
-if(NOT COMPILER_RT_DEBUG)
-  if(MSVC)
-    list(APPEND SANITIZER_COMMON_CFLAGS /O2)
-  else()
-    list(APPEND SANITIZER_COMMON_CFLAGS -O3)
-  endif()
+# Build with optimization, unless we're in debug mode. If we're using MSVC,
+# always respect the optimization flags set by CMAKE_BUILD_TYPE instead.
+if(NOT COMPILER_RT_DEBUG AND NOT MSVC)
+  list(APPEND SANITIZER_COMMON_CFLAGS -O3)
 endif()
 
 # Build sanitizer runtimes with debug info.
@@ -291,11 +293,11 @@ elseif(COMPILER_RT_HAS_Zi_FLAG)
 endif()
 
 # Turn off several warnings.
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_GNU_FLAG -Wno-gnu)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_VARIADIC_MACROS_FLAG -Wno-variadic-macros)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_C99_EXTENSIONS_FLAG -Wno-c99-extensions)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WNO_NON_VIRTUAL_DTOR_FLAG -Wno-non-virtual-dtor)
-append_if(SANITIZER_COMMON_CFLAGS COMPILER_RT_HAS_WD4722_FLAG /wd4722)
+append_if(COMPILER_RT_HAS_WNO_GNU_FLAG -Wno-gnu SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_WNO_VARIADIC_MACROS_FLAG -Wno-variadic-macros SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_WNO_C99_EXTENSIONS_FLAG -Wno-c99-extensions SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_WNO_NON_VIRTUAL_DTOR_FLAG -Wno-non-virtual-dtor SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_WD4722_FLAG /wd4722 SANITIZER_COMMON_CFLAGS)
 
 if(APPLE)
   # Obtain the iOS Simulator SDK path from xcodebuild.

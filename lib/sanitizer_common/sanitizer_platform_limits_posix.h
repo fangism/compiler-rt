@@ -1189,9 +1189,9 @@ namespace __sanitizer {
 #endif
 
   extern const int errno_EINVAL;
-#if HAVE_EOWNERDEAD
+// #if HAVE_EOWNERDEAD
   extern const int errno_EOWNERDEAD;
-#endif
+// #endif
 
   extern const int si_SEGV_MAPERR;
   extern const int si_SEGV_ACCERR;

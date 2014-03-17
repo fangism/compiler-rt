@@ -47,13 +47,31 @@ class BVGraph {
   }
 
   // Returns true if at least one new edge was added.
-  bool addEdges(const BV &from, uptr to) {
-    bool res = false;
+  uptr addEdges(const BV &from, uptr to, uptr added_edges[],
+                uptr max_added_edges) {
+    uptr res = 0;
     t1.copyFrom(from);
-    while (!t1.empty())
-      if (v[t1.getAndClearFirstOne()].setBit(to))
-        res = true;
+    while (!t1.empty()) {
+      uptr node = t1.getAndClearFirstOne();
+      if (v[node].setBit(to))
+        if (res < max_added_edges)
+          added_edges[res++] = node;
+    }
     return res;
+  }
+
+  // *EXPERIMENTAL*
+  // Returns true if all edges from=>to exist.
+  // This function does not use any global state except for 'this' itself,
+  // and thus can be called from different threads w/o locking.
+  // This would be racy.
+  // FIXME: investigate how much we can prove about this race being "benign".
+  bool hasAllEdges(const BV &from, uptr to) {
+    for (typename BV::Iterator it(from); it.hasNext(); ) {
+      uptr idx = it.next();
+      if (!v[idx].getBit(to)) return false;
+    }
+    return true;
   }
 
   // Returns true if the edge from=>to was removed.

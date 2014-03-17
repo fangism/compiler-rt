@@ -50,8 +50,10 @@
 namespace __sanitizer {
 
 // This function is defined elsewhere if we intercepted pthread_attr_getstack.
+extern "C" {
 SANITIZER_WEAK_ATTRIBUTE int
 real_pthread_attr_getstack(void *attr, void **addr, size_t *size);
+}  // extern "C"
 
 static int my_pthread_attr_getstack(void *attr, void **addr, size_t *size) {
   if (real_pthread_attr_getstack)
@@ -513,6 +515,18 @@ void SetIndirectCallWrapper(uptr wrapper) {
   CHECK(!indirect_call_wrapper);
   CHECK(wrapper);
   indirect_call_wrapper = wrapper;
+}
+
+int call_pthread_cancel_with_cleanup(int(*fn)(void *c, void *m,
+    void *abstime), void *c, void *m, void *abstime,
+    void(*cleanup)(void *arg), void *arg) {
+  // pthread_cleanup_push/pop are hardcore macros mess.
+  // We can't intercept nor call them w/o including pthread.h.
+  int res;
+  pthread_cleanup_push(cleanup, arg);
+  res = fn(c, m, abstime);
+  pthread_cleanup_pop(0);
+  return res;
 }
 
 }  // namespace __sanitizer
