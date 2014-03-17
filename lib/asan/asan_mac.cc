@@ -357,6 +357,7 @@ asan_block_context_t *alloc_asan_context(void *ctxt, dispatch_function_t func,
                               asan_dispatch_call_block_and_release);          \
   }
 
+#if !defined(MISSING_BLOCKS_SUPPORT)
 INTERCEPT_DISPATCH_X_F_3(dispatch_async_f)
 INTERCEPT_DISPATCH_X_F_3(dispatch_sync_f)
 INTERCEPT_DISPATCH_X_F_3(dispatch_barrier_async_f)
@@ -388,7 +389,6 @@ INTERCEPTOR(void, dispatch_group_async_f, dispatch_group_t group,
                                asan_dispatch_call_block_and_release);
 }
 
-#if !defined(MISSING_BLOCKS_SUPPORT)
 extern "C" {
 void dispatch_async(dispatch_queue_t dq, void(^work)(void));
 void dispatch_group_async(dispatch_group_t dg, dispatch_queue_t dq,

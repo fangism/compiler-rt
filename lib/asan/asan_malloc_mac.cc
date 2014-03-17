@@ -64,6 +64,7 @@ INTERCEPTOR(malloc_zone_t *, malloc_default_zone, void) {
   return &asan_zone;
 }
 
+#if __DARWIN_VERSION__ >= 10
 INTERCEPTOR(malloc_zone_t *, malloc_default_purgeable_zone, void) {
   // FIXME: ASan should support purgeable allocations.
   // https://code.google.com/p/address-sanitizer/issues/detail?id=139
@@ -71,6 +72,7 @@ INTERCEPTOR(malloc_zone_t *, malloc_default_purgeable_zone, void) {
   return &asan_zone;
 }
 
+https://developer.apple.com/library/mac/releasenotes/MacOSX/WhatsNewInOSX/Articles/MacOSX10_6.html
 INTERCEPTOR(void, malloc_make_purgeable, void *ptr) {
   // FIXME: ASan should support purgeable allocations. Ignoring them is fine
   // for now.
@@ -85,6 +87,7 @@ INTERCEPTOR(int, malloc_make_nonpurgeable, void *ptr) {
   // malloc_make_purgeable().
   return 0;
 }
+#endif
 
 INTERCEPTOR(void, malloc_set_zone_name, malloc_zone_t *zone, const char *name) {
   ENSURE_ASAN_INITED();
@@ -138,6 +141,7 @@ INTERCEPTOR(size_t, malloc_good_size, size_t size) {
   return asan_zone.introspect->good_size(&asan_zone, size);
 }
 
+#if __DARWIN_VERSION__ >= 10
 INTERCEPTOR(int, posix_memalign, void **memptr, size_t alignment, size_t size) {
   ENSURE_ASAN_INITED();
   CHECK(memptr);
@@ -149,6 +153,7 @@ INTERCEPTOR(int, posix_memalign, void **memptr, size_t alignment, size_t size) {
   }
   return -1;
 }
+#endif
 
 namespace {
 

@@ -1179,6 +1179,8 @@ INTERCEPTOR_WITH_SUFFIX(int, wait, int *status) {
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, status, sizeof(*status));
   return res;
 }
+#if __DARWIN_VERSION__ > 11
+// can't find this symbol in /usr/lib/system/libsystem_c.dylib
 INTERCEPTOR_WITH_SUFFIX(int, waitid, int idtype, int id, void *infop,
                         int options) {
   void *ctx;
@@ -1188,6 +1190,7 @@ INTERCEPTOR_WITH_SUFFIX(int, waitid, int idtype, int id, void *infop,
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, infop, siginfo_t_sz);
   return res;
 }
+#endif
 INTERCEPTOR_WITH_SUFFIX(int, waitpid, int pid, int *status, int options) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, waitpid, pid, status, options);
