@@ -36,8 +36,9 @@ struct DDLogicalThread {
 struct DD : public DDetector {
   SpinMutex mtx;
   DeadlockDetector<DDBV> dd;
+  DDFlags flags;
 
-  DD();
+  explicit DD(const DDFlags *flags);
 
   DDPhysicalThread* CreatePhysicalThread();
   void DestroyPhysicalThread(DDPhysicalThread *pt);
@@ -54,14 +55,17 @@ struct DD : public DDetector {
   DDReport *GetReport(DDCallback *cb);
 
   void MutexEnsureID(DDLogicalThread *lt, DDMutex *m);
+  void ReportDeadlock(DDCallback *cb, DDMutex *m);
 };
 
-DDetector *DDetector::Create() {
+DDetector *DDetector::Create(const DDFlags *flags) {
+  (void)flags;
   void *mem = MmapOrDie(sizeof(DD), "deadlock detector");
-  return new(mem) DD();
+  return new(mem) DD(flags);
 }
 
-DD::DD() {
+DD::DD(const DDFlags *flags)
+    : flags(*flags) {
   dd.clear();
 }
 
@@ -108,35 +112,42 @@ void DD::MutexBeforeLock(DDCallback *cb,
   if (dd.onLockBefore(&lt->dd, m->id)) {
     // Actually add this edge now so that we have all the stack traces.
     dd.addEdges(&lt->dd, m->id, cb->Unwind());
-    uptr path[10];
-    uptr len = dd.findPathToLock(&lt->dd, m->id, path, ARRAY_SIZE(path));
-    CHECK_GT(len, 0U);  // Hm.. cycle of 10 locks? I'd like to see that.
-    CHECK_EQ(m->id, path[0]);
-    lt->report_pending = true;
-    DDReport *rep = &lt->rep;
-    rep->n = len;
-    for (uptr i = 0; i < len; i++) {
-      uptr from = path[i];
-      uptr to = path[(i + 1) % len];
-      DDMutex *m0 = (DDMutex*)dd.getData(from);
-      DDMutex *m1 = (DDMutex*)dd.getData(to);
+    ReportDeadlock(cb, m);
+  }
+}
 
-      u32 stk_from = 0, stk_to = 0;
-      dd.findEdge(from, to, &stk_from, &stk_to);
-      // Printf("Edge: %zd=>%zd: %u/%u\n", from, to, stk_from, stk_to);
-      rep->loop[i].thr_ctx = 0;  // don't know
-      rep->loop[i].mtx_ctx0 = m0->ctx;
-      rep->loop[i].mtx_ctx1 = m1->ctx;
-      rep->loop[i].stk[0] = stk_from;
-      rep->loop[i].stk[1] = stk_to;
-    }
+void DD::ReportDeadlock(DDCallback *cb, DDMutex *m) {
+  DDLogicalThread *lt = cb->lt;
+  uptr path[10];
+  uptr len = dd.findPathToLock(&lt->dd, m->id, path, ARRAY_SIZE(path));
+  CHECK_GT(len, 0U);  // Hm.. cycle of 10 locks? I'd like to see that.
+  CHECK_EQ(m->id, path[0]);
+  lt->report_pending = true;
+  DDReport *rep = &lt->rep;
+  rep->n = len;
+  for (uptr i = 0; i < len; i++) {
+    uptr from = path[i];
+    uptr to = path[(i + 1) % len];
+    DDMutex *m0 = (DDMutex*)dd.getData(from);
+    DDMutex *m1 = (DDMutex*)dd.getData(to);
+
+    u32 stk_from = 0, stk_to = 0;
+    dd.findEdge(from, to, &stk_from, &stk_to);
+    // Printf("Edge: %zd=>%zd: %u/%u\n", from, to, stk_from, stk_to);
+    rep->loop[i].thr_ctx = 0;  // don't know
+    rep->loop[i].mtx_ctx0 = m0->ctx;
+    rep->loop[i].mtx_ctx1 = m1->ctx;
+    rep->loop[i].stk[0] = stk_to;
+    rep->loop[i].stk[1] = stk_from;
   }
 }
 
 void DD::MutexAfterLock(DDCallback *cb, DDMutex *m, bool wlock, bool trylock) {
   DDLogicalThread *lt = cb->lt;
-  u32 stk = cb->Unwind();  // FIXME: if this is hot, do this under a flag.
-  // Printf("T%p MutexLock:   %zx\n", lt, m->id);
+  u32 stk = 0;
+  if (flags.second_deadlock_stack)
+    stk = cb->Unwind();
+  // Printf("T%p MutexLock:   %zx stk %u\n", lt, m->id, stk);
   if (dd.onFirstLock(&lt->dd, m->id, stk))
     return;
   if (dd.onLockFast(&lt->dd, m->id, stk))

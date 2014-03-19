@@ -18,6 +18,9 @@
 
 namespace __dsan {
 
+struct Flags : CommonFlags, DDFlags {
+};
+
 struct Mutex {
   DDMutex dd;
 };
@@ -36,7 +39,7 @@ struct Callback : DDCallback {
   virtual u32 Unwind();
 };
 
-typedef AddrHashMap<Mutex, 1000003> MutexHashMap;
+typedef AddrHashMap<Mutex, 31051> MutexHashMap;
 
 struct Context {
   DDetector *dd;
@@ -44,8 +47,9 @@ struct Context {
   MutexHashMap mutex_map;
 };
 
-inline CommonFlags* flags() {
-  return common_flags();
+inline Flags* flags() {
+  static Flags flags;
+  return &flags;
 }
 
 void Initialize();

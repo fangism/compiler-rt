@@ -109,9 +109,9 @@ SHARED_LIBRARY.asan-arm-android := 1
 ANDROID_COMMON_FLAGS := -target arm-linux-androideabi \
 	--sysroot=$(LLVM_ANDROID_TOOLCHAIN_DIR)/sysroot \
 	-B$(LLVM_ANDROID_TOOLCHAIN_DIR)
-CFLAGS.asan-arm-android := $(CFLAGS) -fPIC -fno-builtin \
+CFLAGS.asan-arm-android := $(CFLAGS) $(SANITIZER_CFLAGS) \
 	$(ANDROID_COMMON_FLAGS) -fno-rtti \
-	-I$(ProjSrcRoot)/third_party/android/include
+	-I$(ProjSrcRoot)/android/include
 LDFLAGS.asan-arm-android := $(LDFLAGS) $(ANDROID_COMMON_FLAGS) -ldl -lm -llog \
 	-lstdc++ -Wl,-soname=libclang_rt.asan-arm-android.so -Wl,-z,defs
 

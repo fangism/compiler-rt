@@ -9,6 +9,7 @@
 
 #include "dd_rtl.h"
 #include "interception/interception.h"
+#include "sanitizer_common/sanitizer_procmaps.h"
 #include <pthread.h>
 #include <stdlib.h>
 
@@ -17,14 +18,29 @@ using namespace __dsan;
 extern "C" void *__libc_malloc(uptr size);
 extern "C" void __libc_free(void *ptr);
 
+__attribute__((tls_model("initial-exec")))
 static __thread Thread *thr;
+__attribute__((tls_model("initial-exec")))
+static __thread volatile int initing;
+static bool inited;
+static uptr g_data_start;
+static uptr g_data_end;
 
-static void InitThread() {
+static bool InitThread() {
+  if (initing)
+    return false;
   if (thr != 0)
-    return;
+    return true;
+  initing = true;
+  if (!inited) {
+    inited = true;
+    Initialize();
+  }
   thr = (Thread*)InternalAlloc(sizeof(*thr));
   internal_memset(thr, 0, sizeof(*thr));
   ThreadInit(thr);
+  initing = false;
+  return true;
 }
 
 INTERCEPTOR(int, pthread_mutex_destroy, pthread_mutex_t *m) {
@@ -209,7 +225,75 @@ INTERCEPTOR(int, pthread_cond_destroy, pthread_cond_t *c) {
   return res;
 }
 
+// for symbolizer
+INTERCEPTOR(char*, realpath, const char *path, char *resolved_path) {
+  InitThread();
+  return REAL(realpath)(path, resolved_path);
+}
+
+INTERCEPTOR(SSIZE_T, read, int fd, void *ptr, SIZE_T count) {
+  InitThread();
+  return REAL(read)(fd, ptr, count);
+}
+
+INTERCEPTOR(SSIZE_T, pread, int fd, void *ptr, SIZE_T count, OFF_T offset) {
+  InitThread();
+  return REAL(pread)(fd, ptr, count, offset);
+}
+
+extern "C" {
+void __dsan_before_mutex_lock(uptr m, int writelock) {
+  if (!InitThread())
+    return;
+  MutexBeforeLock(thr, m, writelock);
+}
+
+void __dsan_after_mutex_lock(uptr m, int writelock, int trylock) {
+  if (!InitThread())
+    return;
+  MutexAfterLock(thr, m, writelock, trylock);
+}
+
+void __dsan_before_mutex_unlock(uptr m, int writelock) {
+  if (!InitThread())
+    return;
+  MutexBeforeUnlock(thr, m, writelock);
+}
+
+void __dsan_mutex_destroy(uptr m) {
+  if (!InitThread())
+    return;
+  // if (m >= g_data_start && m < g_data_end)
+  //   return;
+  MutexDestroy(thr, m);
+}
+}  // extern "C"
+
 namespace __dsan {
+
+static void InitDataSeg() {
+  MemoryMappingLayout proc_maps(true);
+  uptr start, end, offset;
+  char name[128];
+  bool prev_is_data = false;
+  while (proc_maps.Next(&start, &end, &offset, name, ARRAY_SIZE(name),
+                        /*protection*/ 0)) {
+    bool is_data = offset != 0 && name[0] != 0;
+    // BSS may get merged with [heap] in /proc/self/maps. This is not very
+    // reliable.
+    bool is_bss = offset == 0 &&
+      (name[0] == 0 || internal_strcmp(name, "[heap]") == 0) && prev_is_data;
+    if (g_data_start == 0 && is_data)
+      g_data_start = start;
+    if (is_bss)
+      g_data_end = end;
+    prev_is_data = is_data;
+  }
+  VPrintf(1, "guessed data_start=%p data_end=%p\n",  g_data_start, g_data_end);
+  CHECK_LT(g_data_start, g_data_end);
+  CHECK_GE((uptr)&g_data_start, g_data_start);
+  CHECK_LT((uptr)&g_data_start, g_data_end);
+}
 
 void InitializeInterceptors() {
   INTERCEPT_FUNCTION(pthread_mutex_destroy);
@@ -237,16 +321,13 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION_VER(pthread_cond_wait, "GLIBC_2.3.2");
   INTERCEPT_FUNCTION_VER(pthread_cond_timedwait, "GLIBC_2.3.2");
   INTERCEPT_FUNCTION_VER(pthread_cond_destroy, "GLIBC_2.3.2");
+
+  // for symbolizer
+  INTERCEPT_FUNCTION(realpath);
+  INTERCEPT_FUNCTION(read);
+  INTERCEPT_FUNCTION(pread);
+
+  InitDataSeg();
 }
 
 }  // namespace __dsan
-
-#if DYNAMIC
-static void __local_dsan_init() __attribute__((constructor));
-void __local_dsan_init() {
-  __dsan::Initialize();
-}
-#else
-__attribute__((section(".preinit_array"), used))
-void (*__local_dsan_preinit)(void) = __dsan::Initialize;
-#endif

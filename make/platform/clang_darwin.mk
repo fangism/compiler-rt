@@ -168,7 +168,7 @@ CFLAGS.asan_iossim_dynamic := \
 	-gline-tables-only \
 	-DMAC_INTERPOSE_FUNCTIONS=1
 
-CFLAGS.ubsan_osx	:= $(CFLAGS) -mmacosx-version-min=10.4 -fno-builtin
+CFLAGS.ubsan_osx := $(CFLAGS) -mmacosx-version-min=10.4 -fno-builtin
 
 CFLAGS.ios.i386		:= $(CFLAGS) $(IOSSIM_DEPLOYMENT_ARGS)
 CFLAGS.ios.x86_64	:= $(CFLAGS) $(IOSSIM_DEPLOYMENT_ARGS)
