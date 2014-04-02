@@ -262,7 +262,7 @@ add_custom_target(builtins)
 if (NOT WIN32)
   foreach(arch x86_64 i386 ppc arm)
     if(CAN_TARGET_${arch})
-      add_compiler_rt_static_runtime(clang_rt.${arch} ${arch}
+      add_compiler_rt_runtime(clang_rt.${arch} ${arch} STATIC
         SOURCES ${${arch}_SOURCES}
         CFLAGS "-std=c99")
       add_dependencies(builtins clang_rt.${arch})

@@ -53,8 +53,6 @@ namespace __sanitizer {
   extern unsigned struct_stat64_sz;
 #endif
   extern unsigned struct_rusage_sz;
-  extern unsigned struct_passwd_sz;
-  extern unsigned struct_group_sz;
   extern unsigned siginfo_t_sz;
   extern unsigned struct_itimerval_sz;
   extern unsigned pthread_t_sz;
@@ -169,7 +167,17 @@ namespace __sanitizer {
   const unsigned old_sigset_t_sz = sizeof(unsigned long);
 #endif // SANITIZER_LINUX || SANITIZER_FREEBSD
 
+#if SANITIZER_ANDROID
+  struct __sanitizer_mallinfo {
+    uptr v[10];
+  };
+#endif
+
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
+  struct __sanitizer_mallinfo {
+    int v[10];
+  };
+
   extern unsigned struct_ustat_sz;
   extern unsigned struct_rlimit64_sz;
   extern unsigned struct_statvfs64_sz;
@@ -296,6 +304,42 @@ namespace __sanitizer {
 #else
   typedef unsigned __sanitizer_pthread_key_t;
 #endif
+
+  struct __sanitizer_passwd {
+    char *pw_name;
+    char *pw_passwd;
+    int pw_uid;
+    int pw_gid;
+#if SANITIZER_MAC || SANITIZER_FREEBSD
+    long pw_change;
+    char *pw_class;
+#endif
+#if !SANITIZER_ANDROID
+    char *pw_gecos;
+#endif
+    char *pw_dir;
+    char *pw_shell;
+#if SANITIZER_MAC || SANITIZER_FREEBSD
+    long pw_expire;
+#endif
+#if SANITIZER_FREEBSD
+    int pw_fields;
+#endif
+  };
+
+  struct __sanitizer_group {
+    char *gr_name;
+    char *gr_passwd;
+    int gr_gid;
+    char **gr_mem;
+  };
+
+  struct __sanitizer_timeb {
+    long time;
+    unsigned short millitm;
+    short timezone;
+    short dstflag;
+  };
 
   struct __sanitizer_ether_addr {
     u8 octet[6];

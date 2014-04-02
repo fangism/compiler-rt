@@ -37,6 +37,7 @@ namespace __tsan {
 THREADLOCAL char cur_thread_placeholder[sizeof(ThreadState)] ALIGNED(64);
 #endif
 static char ctx_placeholder[sizeof(Context)] ALIGNED(64);
+Context *ctx;
 
 // Can be overriden by a front-end.
 #ifdef TSAN_EXTERNAL_HOOKS
@@ -50,11 +51,6 @@ bool WEAK OnFinalize(bool failed) {
 SANITIZER_INTERFACE_ATTRIBUTE
 void WEAK OnInitialize() {}
 #endif
-
-static Context *ctx;
-Context *CTX() {
-  return ctx;
-}
 
 static char thread_registry_placeholder[sizeof(ThreadRegistry)];
 
@@ -94,6 +90,7 @@ ThreadState::ThreadState(Context *ctx, int tid, int unique_id, u64 epoch,
   // they may be accessed before the ctor.
   // , ignore_reads_and_writes()
   // , ignore_interceptors()
+  , clock(tid)
 #ifndef TSAN_GO
   , jmp_bufs(MBlockJmpBuf)
 #endif
@@ -102,7 +99,11 @@ ThreadState::ThreadState(Context *ctx, int tid, int unique_id, u64 epoch,
   , stk_addr(stk_addr)
   , stk_size(stk_size)
   , tls_addr(tls_addr)
-  , tls_size(tls_size) {
+  , tls_size(tls_size)
+#ifndef TSAN_GO
+  , last_sleep_clock(tid)
+#endif
+{
 }
 
 static void MemoryProfiler(Context *ctx, fd_t fd, int i) {
@@ -118,7 +119,6 @@ static void MemoryProfiler(Context *ctx, fd_t fd, int i) {
 }
 
 static void BackgroundThread(void *arg) {
-  Context *ctx = CTX();
   // This is a non-initialized non-user thread, nothing to see here.
   ScopedIgnoreInterceptors ignore;
   const u64 kMs2Ns = 1000 * 1000;
@@ -324,21 +324,18 @@ int Finalize(ThreadState *thr) {
 
 #ifndef TSAN_GO
 void ForkBefore(ThreadState *thr, uptr pc) {
-  Context *ctx = CTX();
-  ctx->report_mtx.Lock();
   ctx->thread_registry->Lock();
+  ctx->report_mtx.Lock();
 }
 
 void ForkParentAfter(ThreadState *thr, uptr pc) {
-  Context *ctx = CTX();
-  ctx->thread_registry->Unlock();
   ctx->report_mtx.Unlock();
+  ctx->thread_registry->Unlock();
 }
 
 void ForkChildAfter(ThreadState *thr, uptr pc) {
-  Context *ctx = CTX();
-  ctx->thread_registry->Unlock();
   ctx->report_mtx.Unlock();
+  ctx->thread_registry->Unlock();
 
   uptr nthread = 0;
   ctx->thread_registry->GetNumberOfThreads(0, 0, &nthread /* alive threads */);

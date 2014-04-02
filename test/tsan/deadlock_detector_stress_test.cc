@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <new>
 
 #ifndef LockType
 #define LockType PthreadMutex
@@ -25,11 +26,14 @@ static int iter_count = 100000;
 class PthreadMutex {
  public:
   explicit PthreadMutex(bool recursive = false) {
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    if (recursive)
+    if (recursive) {
+      pthread_mutexattr_t attr;
+      pthread_mutexattr_init(&attr);
       pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    assert(0 == pthread_mutex_init(&mu_, &attr));
+      assert(0 == pthread_mutex_init(&mu_, &attr));
+    } else {
+      assert(0 == pthread_mutex_init(&mu_, 0));
+    }
   }
   ~PthreadMutex() {
     assert(0 == pthread_mutex_destroy(&mu_));
@@ -152,17 +156,18 @@ class LockTest {
     Lock_0_1();
     Lock_1_0();
     // CHECK: WARNING: ThreadSanitizer: lock-order-inversion (potential deadlock)
-    // CHECK: Path: [[M1:M[0-9]+]] => [[M2:M[0-9]+]] => [[M1]]
-    // CHECK: Edge: [[M1]] => [[M2]]
+    // CHECK: Cycle in lock order graph: [[M1:M[0-9]+]] ([[A1]]) => [[M2:M[0-9]+]] ([[A2]]) => [[M1]]
+    // CHECK: Mutex [[M2]] acquired here while holding mutex [[M1]]
     // CHECK:   #0 pthread_
+    // CHECK-SECOND:   Mutex [[M1]] previously acquired by the same thread here:
+    // CHECK-SECOND:   #0 pthread_
+    // CHECK-NOT-SECOND:   second_deadlock_stack=1 to get more informative warning message
+    // CHECK-NOT-SECOND-NOT:   #0 pthread_
+    // CHECK: Mutex [[M1]] acquired here while holding mutex [[M2]]
+    // CHECK:   #0 pthread_
+    // CHECK-SECOND:   Mutex [[M2]] previously acquired by the same thread here:
     // CHECK-SECOND:   #0 pthread_
     // CHECK-NOT-SECOND-NOT:   #0 pthread_
-    // CHECK: Edge: [[M2]] => [[M1]]
-    // CHECK:   #0 pthread_
-    // CHECK-SECOND:   #0 pthread_
-    // CHECK-NOT-SECOND-NOT:   #0 pthread_
-    // CHECK: Mutex [[M1]] ([[A1]]) created at:
-    // CHECK: Mutex [[M2]] ([[A2]]) created at:
     // CHECK-NOT: WARNING: ThreadSanitizer:
   }
 
@@ -178,10 +183,7 @@ class LockTest {
     Lock2(1, 2);
     Lock2(2, 0);
     // CHECK: WARNING: ThreadSanitizer: lock-order-inversion (potential deadlock)
-    // CHECK: Path: [[M1:M[0-9]+]] => [[M2:M[0-9]+]] => [[M3:M[0-9]+]] => [[M1]]
-    // CHECK: Mutex [[M1]] ([[A1]]) created at:
-    // CHECK: Mutex [[M2]] ([[A2]]) created at:
-    // CHECK: Mutex [[M3]] ([[A3]]) created at:
+    // CHECK: Cycle in lock order graph: [[M1:M[0-9]+]] ([[A1]]) => [[M2:M[0-9]+]] ([[A2]]) => [[M3:M[0-9]+]] ([[A3]]) => [[M1]]
     // CHECK-NOT: WARNING: ThreadSanitizer:
   }
 
@@ -224,6 +226,11 @@ class LockTest {
     Init(5);
     RunThreads(&LockTest::Lock_0_1, &LockTest::Lock_1_0);
     // CHECK: WARNING: ThreadSanitizer: lock-order-inversion
+    // CHECK: Cycle in lock order graph: [[M1:M[0-9]+]] ({{.*}}) => [[M2:M[0-9]+]] ({{.*}}) => [[M1]]
+    // CHECK: Mutex [[M2]] acquired here while holding mutex [[M1]] in thread [[T1:T[0-9]+]]
+    // CHECK: Mutex [[M1]] acquired here while holding mutex [[M2]] in thread [[T2:T[0-9]+]]
+    // CHECK: Thread [[T1]] {{.*}} created by main thread
+    // CHECK: Thread [[T2]] {{.*}} created by main thread
     // CHECK-NOT: WARNING: ThreadSanitizer:
   }
 
@@ -426,12 +433,16 @@ class LockTest {
     fprintf(stderr, "Starting Test16: detailed output test with two locks\n");
     // CHECK: Starting Test16
     // CHECK: WARNING: ThreadSanitizer: lock-order-inversion
+    // CHECK: acquired here while holding mutex
     // CHECK: LockTest::Acquire1
     // CHECK-NEXT: LockTest::Acquire_0_then_1
+    // CHECK-SECOND: previously acquired by the same thread here
     // CHECK-SECOND: LockTest::Acquire0
     // CHECK-SECOND-NEXT: LockTest::Acquire_0_then_1
+    // CHECK: acquired here while holding mutex
     // CHECK: LockTest::Acquire0
     // CHECK-NEXT: LockTest::Acquire_1_then_0
+    // CHECK-SECOND: previously acquired by the same thread here
     // CHECK-SECOND: LockTest::Acquire1
     // CHECK-SECOND-NEXT: LockTest::Acquire_1_then_0
     Init(5);
@@ -469,6 +480,26 @@ class LockTest {
   __attribute__((noinline)) void Acquire_0_then_1() { Acquire0(); Acquire1(); }
   __attribute__((noinline)) void Acquire_1_then_2() { Acquire1(); Acquire2(); }
   __attribute__((noinline)) void Acquire_2_then_0() { Acquire2(); Acquire0(); }
+
+  // This test creates, locks, unlocks and destroys lots of mutexes.
+  void Test18() {
+    if (test_number > 0 && test_number != 18) return;
+    fprintf(stderr, "Starting Test18: create, lock and destroy 4 locks; all in "
+                    "4 threads in a loop\n");
+    RunThreads(&LockTest::Test18_Thread, &LockTest::Test18_Thread,
+               &LockTest::Test18_Thread, &LockTest::Test18_Thread);
+  }
+
+  void Test18_Thread() {
+    LockType *l = new LockType[4];
+    for (size_t i = 0; i < iter_count / 100; i++) {
+      for (int i = 0; i < 4; i++) l[i].lock();
+      for (int i = 0; i < 4; i++) l[i].unlock();
+      for (int i = 0; i < 4; i++) l[i].~LockType();
+      for (int i = 0; i < 4; i++) new ((void*)&l[i]) LockType();
+    }
+    delete [] l;
+  }
 
  private:
   void Lock2(size_t l1, size_t l2) { L(l1); L(l2); U(l2); U(l1); }
@@ -559,6 +590,7 @@ int main(int argc, char **argv) {
   LockTest().Test15();
   LockTest().Test16();
   LockTest().Test17();
+  LockTest().Test18();
   fprintf(stderr, "ALL-DONE\n");
   // CHECK: ALL-DONE
 }

@@ -1,8 +1,8 @@
-// RUN: %clangxx_msan -fsanitize-memory-track-origins -mllvm -msan-track-origins=2 -m64 -DOFFSET=0 -O3 %s -o %t && \
+// RUN: %clangxx_msan -fsanitize-memory-track-origins=2 -m64 -DOFFSET=0 -O3 %s -o %t && \
 // RUN:     not %t >%t.out 2>&1
 // RUN: FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-Z1 < %t.out
 
-// RUN: %clangxx_msan -fsanitize-memory-track-origins -mllvm -msan-track-origins=2 -DOFFSET=10 -m64 -O3 %s -o %t && \
+// RUN: %clangxx_msan -fsanitize-memory-track-origins=2 -DOFFSET=10 -m64 -O3 %s -o %t && \
 // RUN:     not %t >%t.out 2>&1
 // RUN: FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-Z2 < %t.out
 
@@ -40,11 +40,11 @@ int main(int argc, char *argv[]) {
 // CHECK: {{#0 .* in main .*chained_origin_memcpy.cc:36}}
 
 // CHECK: Uninitialized value was stored to memory at
-// CHECK: {{#.* in fn_h.*chained_origin_memcpy.cc:28}}
+// CHECK: {{#1 .* in fn_h.*chained_origin_memcpy.cc:28}}
 
 // CHECK: Uninitialized value was stored to memory at
-// CHECK: {{#.* in fn_g.*chained_origin_memcpy.cc:18}}
-// CHECK: {{#.* in fn_f.*chained_origin_memcpy.cc:23}}
+// CHECK: {{#0 .* in fn_g.*chained_origin_memcpy.cc:18}}
+// CHECK: {{#1 .* in fn_f.*chained_origin_memcpy.cc:23}}
 
 // CHECK-Z1: Uninitialized value was created by an allocation of 'z1' in the stack frame of function 'main'
 // CHECK-Z2: Uninitialized value was created by an allocation of 'z2' in the stack frame of function 'main'

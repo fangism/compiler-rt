@@ -471,8 +471,6 @@ struct ThreadState {
                        uptr tls_addr, uptr tls_size);
 };
 
-Context *CTX();
-
 #ifndef TSAN_GO
 extern THREADLOCAL char cur_thread_placeholder[];
 INLINE ThreadState *cur_thread() {
@@ -485,11 +483,7 @@ class ThreadContext : public ThreadContextBase {
   explicit ThreadContext(int tid);
   ~ThreadContext();
   ThreadState *thr;
-#ifdef TSAN_GO
-  StackTrace creation_stack;
-#else
   u32 creation_stack_id;
-#endif
   SyncClock sync;
   // Epoch at which the thread had started.
   // If we see an event from the thread stamped by an older epoch,
@@ -556,6 +550,8 @@ struct Context {
   u64 int_alloc_siz[MBlockTypeCount];
 };
 
+extern Context *ctx;  // The one and the only global runtime context.
+
 struct ScopedIgnoreInterceptors {
   ScopedIgnoreInterceptors() {
 #ifndef TSAN_GO
@@ -579,6 +575,8 @@ class ScopedReport {
   void AddMemoryAccess(uptr addr, Shadow s, const StackTrace *stack,
                        const MutexSet *mset);
   void AddThread(const ThreadContext *tctx);
+  void AddThread(int unique_tid);
+  void AddUniqueTid(int unique_tid);
   void AddMutex(const SyncVar *s);
   u64 AddMutex(u64 id);
   void AddLocation(uptr addr, uptr size);
@@ -588,7 +586,6 @@ class ScopedReport {
   const ReportDesc *GetReport() const;
 
  private:
-  Context *ctx_;
   ReportDesc *rep_;
   // Symbolizer makes lots of intercepted calls. If we try to process them,
   // at best it will cause deadlocks on internal mutexes.

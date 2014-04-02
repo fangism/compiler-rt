@@ -35,8 +35,11 @@
 
 #if SANITIZER_ANDROID
 #include <ucontext.h>
+extern "C" void* _DYNAMIC;
 #else
 #include <sys/ucontext.h>
+#include <dlfcn.h>
+#include <link.h>
 #endif
 
 // x86_64 FreeBSD 9.2 and older define 64-bit register names in both 64-bit
@@ -50,7 +53,17 @@
 # endif
 #endif
 
-extern "C" void* _DYNAMIC;
+typedef enum {
+  ASAN_RT_VERSION_UNDEFINED = 0,
+  ASAN_RT_VERSION_DYNAMIC,
+  ASAN_RT_VERSION_STATIC,
+} asan_rt_version_t;
+
+// FIXME: perhaps also store abi version here?
+extern "C" {
+SANITIZER_INTERFACE_ATTRIBUTE
+asan_rt_version_t  __asan_rt_version;
+}
 
 namespace __asan {
 
@@ -62,6 +75,73 @@ void *AsanDoesNotSupportStaticLinkage() {
   // This will fail to link with -static.
   return &_DYNAMIC;  // defined in link.h
 }
+
+#if SANITIZER_ANDROID
+// FIXME: should we do anything for Android?
+void AsanCheckDynamicRTPrereqs() {}
+void AsanCheckIncompatibleRT() {}
+#else
+static int FindFirstDSOCallback(struct dl_phdr_info *info, size_t size,
+                                void *data) {
+  // Continue until the first dynamic library is found
+  if (!info->dlpi_name || info->dlpi_name[0] == 0)
+    return 0;
+
+  *(const char **)data = info->dlpi_name;
+  return 1;
+}
+
+static bool IsDynamicRTName(const char *libname) {
+  return internal_strstr(libname, "libclang_rt.asan") ||
+    internal_strstr(libname, "libasan.so");
+}
+
+static void ReportIncompatibleRT() {
+  Report("Your application is linked against incompatible ASan runtimes.\n");
+  Die();
+}
+
+void AsanCheckDynamicRTPrereqs() {
+  // Ensure that dynamic RT is the first DSO in the list
+  const char *first_dso_name = 0;
+  dl_iterate_phdr(FindFirstDSOCallback, &first_dso_name);
+  if (first_dso_name && !IsDynamicRTName(first_dso_name)) {
+    Report("ASan runtime does not come first in initial library list; "
+           "you should either link runtime to your application or "
+           "manually preload it with LD_PRELOAD.\n");
+    Die();
+  }
+}
+
+void AsanCheckIncompatibleRT() {
+  if (ASAN_DYNAMIC) {
+    if (__asan_rt_version == ASAN_RT_VERSION_UNDEFINED) {
+      __asan_rt_version = ASAN_RT_VERSION_DYNAMIC;
+    } else if (__asan_rt_version != ASAN_RT_VERSION_DYNAMIC) {
+      ReportIncompatibleRT();
+    }
+  } else {
+    if (__asan_rt_version == ASAN_RT_VERSION_UNDEFINED) {
+      // Ensure that dynamic runtime is not present. We should detect it
+      // as early as possible, otherwise ASan interceptors could bind to
+      // the functions in dynamic ASan runtime instead of the functions in
+      // system libraries, causing crashes later in ASan initialization.
+      MemoryMappingLayout proc_maps(/*cache_enabled*/true);
+      char filename[128];
+      while (proc_maps.Next(0, 0, 0, filename, sizeof(filename), 0)) {
+        if (IsDynamicRTName(filename)) {
+          Report("Your application is linked against "
+                 "incompatible ASan runtimes.\n");
+          Die();
+        }
+      }
+      __asan_rt_version = ASAN_RT_VERSION_STATIC;
+    } else if (__asan_rt_version != ASAN_RT_VERSION_STATIC) {
+      ReportIncompatibleRT();
+    }
+  }
+}
+#endif  // SANITIZER_ANDROID
 
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
 #if defined(__arm__)

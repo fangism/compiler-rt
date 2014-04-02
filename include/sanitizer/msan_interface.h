@@ -38,6 +38,10 @@ extern "C" {
   /* Make memory region fully initialized (without changing its contents). */
   void __msan_unpoison(const volatile void *a, size_t size);
 
+  /* Make a null-terminated string fully initialized (without changing its
+     contents). */
+  void __msan_unpoison_string(const volatile char *a);
+
   /* Make memory region fully uninitialized (without changing its contents). */
   void __msan_poison(const volatile void *a, size_t size);
 
@@ -49,6 +53,10 @@ extern "C" {
   /* Returns the offset of the first (at least partially) poisoned byte in the
      memory range, or -1 if the whole range is good. */
   intptr_t __msan_test_shadow(const volatile void *x, size_t size);
+
+  /* Checks that memory range is fully initialized, and reports an error if it
+   * is not. */
+  void __msan_check_mem_is_initialized(const volatile void *x, size_t size);
 
   /* Set exit code when error(s) were detected.
      Value of 0 means don't change the program exit code. */
@@ -70,10 +78,6 @@ extern "C" {
      format. */
   void __msan_print_shadow(const volatile void *x, size_t size);
 
-  /* Print current function arguments shadow and origin to stderr in a
-     human-readable format. */
-  void __msan_print_param_shadow();
-
   /* Returns true if running under a dynamic tool (DynamoRio-based). */
   int  __msan_has_dynamic_component();
 
@@ -85,6 +89,9 @@ extern "C" {
      a string containing Msan runtime options. See msan_flags.h for details. */
   const char* __msan_default_options();
 
+  // Sets the callback to be called right before death on error.
+  // Passing 0 will unset the callback.
+  void __msan_set_death_callback(void (*callback)(void));
 
   /***********************************/
   /* Allocator statistics interface. */

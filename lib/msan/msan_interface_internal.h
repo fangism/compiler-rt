@@ -40,6 +40,8 @@ void __msan_warning_noreturn();
 SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_unpoison(const void *a, uptr size);
 SANITIZER_INTERFACE_ATTRIBUTE
+void __msan_unpoison_string(const char *s);
+SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_clear_and_unpoison(void *a, uptr size);
 SANITIZER_INTERFACE_ATTRIBUTE
 void* __msan_memcpy(void *dst, const void *src, uptr size);
@@ -61,6 +63,9 @@ void __msan_load_unpoisoned(void *src, uptr size, void *dst);
 // or -1 if the whole range is good.
 SANITIZER_INTERFACE_ATTRIBUTE
 sptr __msan_test_shadow(const void *x, uptr size);
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __msan_check_mem_is_initialized(const void *x, uptr size);
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_set_origin(const void *a, uptr size, u32 origin);
@@ -94,8 +99,6 @@ SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_set_expect_umr(int expect_umr);
 SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_print_shadow(const void *x, uptr size);
-SANITIZER_INTERFACE_ATTRIBUTE
-void __msan_print_param_shadow();
 SANITIZER_INTERFACE_ATTRIBUTE
 int  __msan_has_dynamic_component();
 
@@ -175,6 +178,9 @@ void *__msan_wrap_indirect_call(void *target);
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_set_indirect_call_wrapper(uptr wrapper);
+
+SANITIZER_INTERFACE_ATTRIBUTE
+void __msan_set_death_callback(void (*callback)(void));
 }  // extern "C"
 
 #endif  // MSAN_INTERFACE_INTERNAL_H

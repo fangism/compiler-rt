@@ -59,7 +59,6 @@ if (NOT COMPILER_RT_STANDALONE_BUILD)
         ${LLVM_ENABLE_WERROR})
   # Use just-built Clang to compile/link tests.
   set(COMPILER_RT_TEST_COMPILER ${LLVM_RUNTIME_OUTPUT_INTDIR}/clang)
-  set(COMPILER_RT_TEST_COMPILER_ID Clang)
 else()
   # Take output dir and install path from the user.
   set(COMPILER_RT_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR} CACHE PATH
@@ -71,8 +70,7 @@ else()
   option(COMPILER_RT_INCLUDE_TESTS "Generate and build compiler-rt unit tests." OFF)
   option(COMPILER_RT_ENABLE_WERROR "Fail and stop if warning is triggered" OFF)
   # Use a host compiler to compile/link tests.
-  set(COMPILER_RT_TEST_COMPILER ${CMAKE_C_COMPILER})
-  set(COMPILER_RT_TEST_COMPILER_ID ${CMAKE_C_COMPILER_ID})
+  set(COMPILER_RT_TEST_COMPILER ${CMAKE_C_COMPILER} CACHE PATH "Compiler to use for testing")
 
   if (NOT LLVM_CONFIG_PATH)
     find_program(LLVM_CONFIG_PATH "llvm-config"
@@ -118,6 +116,12 @@ else()
     set(LIT_ARGS_DEFAULT "${LIT_ARGS_DEFAULT} --no-progress-bar")
   endif()
   set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
+endif()
+
+if("${COMPILER_RT_TEST_COMPILER}" MATCHES "clang[+]*$")
+  set(COMPILER_RT_TEST_COMPILER_ID Clang)
+else()
+  set(COMPILER_RT_TEST_COMPILER_ID GNU)
 endif()
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} COMPILER_RT_OS_DIR)
@@ -172,8 +176,8 @@ endfunction()
 # platform. We use the results of these tests to build only the various target
 # runtime libraries supported by our current compilers cross-compiling
 # abilities.
-set(SIMPLE_SOURCE ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/simple.c)
-file(WRITE ${SIMPLE_SOURCE} "#include <stdlib.h>\nint main() {}\n")
+set(SIMPLE_SOURCE ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/simple.cc)
+file(WRITE ${SIMPLE_SOURCE} "#include <stdlib.h>\n#include <limits>\nint main() {}\n")
 
 # test_target_arch(<arch> <target flags...>)
 # Sets the target flags for a given architecture and determines if this
@@ -233,6 +237,8 @@ endfunction()
 option(COMPILER_RT_DEBUG "Build runtimes with full debug info" OFF)
 # COMPILER_RT_DEBUG_PYBOOL is used by lit.common.configured.in.
 pythonize_bool(COMPILER_RT_DEBUG)
+
+option(COMPILER_RT_BUILD_SHARED_ASAN "Build shared version of AddressSanitizer runtime" OFF)
 
 #================================
 # Setup Compiler Flags
@@ -341,6 +347,7 @@ filter_available_targets(ASAN_SUPPORTED_ARCH x86_64 i386 ppc64 ppc)
 filter_available_targets(DFSAN_SUPPORTED_ARCH x86_64)
 filter_available_targets(LSAN_SUPPORTED_ARCH x86_64)
 filter_available_targets(MSAN_SUPPORTED_ARCH x86_64)
+filter_available_targets(PROFILE_SUPPORTED_ARCH x86_64 i386 arm)
 filter_available_targets(TSAN_SUPPORTED_ARCH x86_64)
 filter_available_targets(UBSAN_SUPPORTED_ARCH x86_64 i386)
 

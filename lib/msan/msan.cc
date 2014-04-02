@@ -97,6 +97,8 @@ bool msan_init_is_running;
 
 int msan_report_count = 0;
 
+void (*death_callback)(void);
+
 // Array of stack origins.
 // FIXME: make it resizable.
 static const uptr kNumStackOriginDescrs = 1024 * 1024;
@@ -107,24 +109,24 @@ static atomic_uint32_t NumStackOriginDescrs;
 static void ParseFlagsFromString(Flags *f, const char *str) {
   CommonFlags *cf = common_flags();
   ParseCommonFlagsFromString(cf, str);
-  ParseFlag(str, &f->poison_heap_with_zeroes, "poison_heap_with_zeroes");
-  ParseFlag(str, &f->poison_stack_with_zeroes, "poison_stack_with_zeroes");
-  ParseFlag(str, &f->poison_in_malloc, "poison_in_malloc");
-  ParseFlag(str, &f->poison_in_free, "poison_in_free");
-  ParseFlag(str, &f->exit_code, "exit_code");
+  ParseFlag(str, &f->poison_heap_with_zeroes, "poison_heap_with_zeroes", "");
+  ParseFlag(str, &f->poison_stack_with_zeroes, "poison_stack_with_zeroes", "");
+  ParseFlag(str, &f->poison_in_malloc, "poison_in_malloc", "");
+  ParseFlag(str, &f->poison_in_free, "poison_in_free", "");
+  ParseFlag(str, &f->exit_code, "exit_code", "");
   if (f->exit_code < 0 || f->exit_code > 127) {
     Printf("Exit code not in [0, 128) range: %d\n", f->exit_code);
     Die();
   }
-  ParseFlag(str, &f->report_umrs, "report_umrs");
-  ParseFlag(str, &f->wrap_signals, "wrap_signals");
+  ParseFlag(str, &f->report_umrs, "report_umrs", "");
+  ParseFlag(str, &f->wrap_signals, "wrap_signals", "");
 
   // keep_going is an old name for halt_on_error,
   // and it has inverse meaning.
   f->halt_on_error = !f->halt_on_error;
-  ParseFlag(str, &f->halt_on_error, "keep_going");
+  ParseFlag(str, &f->halt_on_error, "keep_going", "");
   f->halt_on_error = !f->halt_on_error;
-  ParseFlag(str, &f->halt_on_error, "halt_on_error");
+  ParseFlag(str, &f->halt_on_error, "halt_on_error", "");
 }
 
 static void InitializeFlags(Flags *f, const char *options) {
@@ -277,6 +279,7 @@ void __msan_init() {
 
   const char *msan_options = GetEnv("MSAN_OPTIONS");
   InitializeFlags(&msan_flags, msan_options);
+  if (common_flags()->help) PrintFlagDescriptions();
   __sanitizer_set_report_path(common_flags()->log_path);
 
   InitializeInterceptors();
@@ -364,13 +367,6 @@ void __msan_print_shadow(const void *x, uptr size) {
   }
 }
 
-void __msan_print_param_shadow() {
-  for (int i = 0; i < 16; i++) {
-    Printf("#%d:%zx ", i, __msan_param_tls[i]);
-  }
-  Printf("\n");
-}
-
 sptr __msan_test_shadow(const void *x, uptr size) {
   if (!MEM_IS_APP(x)) return -1;
   unsigned char *s = (unsigned char *)MEM_TO_SHADOW((uptr)x);
@@ -378,6 +374,22 @@ sptr __msan_test_shadow(const void *x, uptr size) {
     if (s[i])
       return i;
   return -1;
+}
+
+void __msan_check_mem_is_initialized(const void *x, uptr size) {
+  if (!__msan::flags()->report_umrs) return;
+  sptr offset = __msan_test_shadow(x, size) < 0;
+  if (offset < 0)
+    return;
+
+  GET_CALLER_PC_BP_SP;
+  (void)sp;
+  __msan::PrintWarningWithOrigin(pc, bp,
+                                 __msan_get_origin(((char *)x) + offset));
+  if (__msan::flags()->halt_on_error) {
+    Printf("Exiting\n");
+    Die();
+  }
 }
 
 int __msan_set_poison_in_malloc(int do_poison) {
@@ -481,7 +493,9 @@ void __msan_set_alloca_origin4(void *a, uptr size, const char *descr, uptr pc) {
 }
 
 u32 __msan_chain_origin(u32 id) {
-  GET_STORE_STACK_TRACE;
+  GET_CALLER_PC_BP_SP;
+  (void)sp;
+  GET_STORE_STACK_TRACE_PC_BP(pc, bp);
   return ChainOrigin(id, &stack);
 }
 
@@ -504,41 +518,48 @@ u32 __msan_get_umr_origin() {
 u16 __sanitizer_unaligned_load16(const uu16 *p) {
   __msan_retval_tls[0] = *(uu16 *)MEM_TO_SHADOW((uptr)p);
   if (__msan_get_track_origins())
-    __msan_retval_origin_tls = *(uu32 *)(MEM_TO_ORIGIN((uptr)p) & ~3UL);
+    __msan_retval_origin_tls = GetOriginIfPoisoned((uptr)p, sizeof(*p));
   return *p;
 }
 u32 __sanitizer_unaligned_load32(const uu32 *p) {
   __msan_retval_tls[0] = *(uu32 *)MEM_TO_SHADOW((uptr)p);
   if (__msan_get_track_origins())
-    __msan_retval_origin_tls = *(uu32 *)(MEM_TO_ORIGIN((uptr)p) & ~3UL);
+    __msan_retval_origin_tls = GetOriginIfPoisoned((uptr)p, sizeof(*p));
   return *p;
 }
 u64 __sanitizer_unaligned_load64(const uu64 *p) {
   __msan_retval_tls[0] = *(uu64 *)MEM_TO_SHADOW((uptr)p);
   if (__msan_get_track_origins())
-    __msan_retval_origin_tls = *(uu32 *)(MEM_TO_ORIGIN((uptr)p) & ~3UL);
+    __msan_retval_origin_tls = GetOriginIfPoisoned((uptr)p, sizeof(*p));
   return *p;
 }
 void __sanitizer_unaligned_store16(uu16 *p, u16 x) {
-  *(uu16 *)MEM_TO_SHADOW((uptr)p) = __msan_param_tls[1];
-  if (__msan_get_track_origins())
+  u16 s = __msan_param_tls[1];
+  *(uu16 *)MEM_TO_SHADOW((uptr)p) = s;
+  if (s && __msan_get_track_origins())
     if (uu32 o = __msan_param_origin_tls[2])
-      __msan_set_origin(p, 2, o);
+      SetOriginIfPoisoned((uptr)p, (uptr)&s, sizeof(s), o);
   *p = x;
 }
 void __sanitizer_unaligned_store32(uu32 *p, u32 x) {
-  *(uu32 *)MEM_TO_SHADOW((uptr)p) = __msan_param_tls[1];
-  if (__msan_get_track_origins())
+  u32 s = __msan_param_tls[1];
+  *(uu32 *)MEM_TO_SHADOW((uptr)p) = s;
+  if (s && __msan_get_track_origins())
     if (uu32 o = __msan_param_origin_tls[2])
-      __msan_set_origin(p, 4, o);
+      SetOriginIfPoisoned((uptr)p, (uptr)&s, sizeof(s), o);
   *p = x;
 }
 void __sanitizer_unaligned_store64(uu64 *p, u64 x) {
-  *(uu64 *)MEM_TO_SHADOW((uptr)p) = __msan_param_tls[1];
-  if (__msan_get_track_origins())
+  u64 s = __msan_param_tls[1];
+  *(uu64 *)MEM_TO_SHADOW((uptr)p) = s;
+  if (s && __msan_get_track_origins())
     if (uu32 o = __msan_param_origin_tls[2])
-      __msan_set_origin(p, 8, o);
+      SetOriginIfPoisoned((uptr)p, (uptr)&s, sizeof(s), o);
   *p = x;
+}
+
+void __msan_set_death_callback(void (*callback)(void)) {
+  death_callback = callback;
 }
 
 void *__msan_wrap_indirect_call(void *target) {

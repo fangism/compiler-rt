@@ -32,13 +32,14 @@ foreach(header ${SANITIZER_HEADERS})
 endforeach()
 
 set(SANITIZER_TEST_CFLAGS_COMMON
-  ${COMPILER_RT_GTEST_INCLUDE_CFLAGS}
+  ${COMPILER_RT_GTEST_CFLAGS}
   -I${COMPILER_RT_SOURCE_DIR}/include
   -I${COMPILER_RT_SOURCE_DIR}/lib
   -I${COMPILER_RT_SOURCE_DIR}/lib/sanitizer_common
   -DGTEST_HAS_RTTI=0
-  -std=c++11 -O2 -g -fno-rtti
-  -Wall -Werror -Werror=sign-compare)
+  -O2 -g -fno-rtti
+  -Werror=sign-compare
+  -Wno-non-virtual-dtor)
 
 set(SANITIZER_TEST_LINK_FLAGS_COMMON
   -lstdc++)

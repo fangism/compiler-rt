@@ -161,8 +161,8 @@ INTERCEPTOR(void *, memalign, SIZE_T boundary, SIZE_T size) {
   return ptr;
 }
 
-INTERCEPTOR(void*, __libc_memalign, uptr align, uptr s)
-  ALIAS("memalign");
+INTERCEPTOR(void *, __libc_memalign, uptr align, uptr s)
+    ALIAS(WRAPPER_NAME(memalign));
 
 INTERCEPTOR(void *, valloc, SIZE_T size) {
   GET_MALLOC_STACK_TRACE;
@@ -186,6 +186,32 @@ INTERCEPTOR(void, free, void *ptr) {
   GET_MALLOC_STACK_TRACE;
   if (ptr == 0) return;
   MsanDeallocate(&stack, ptr);
+}
+
+INTERCEPTOR(void, cfree, void *ptr) {
+  GET_MALLOC_STACK_TRACE;
+  if (ptr == 0) return;
+  MsanDeallocate(&stack, ptr);
+}
+
+INTERCEPTOR(uptr, malloc_usable_size, void *ptr) {
+  return __msan_get_allocated_size(ptr);
+}
+
+// This function actually returns a struct by value, but we can't unpoison a
+// temporary! The following is equivalent on all supported platforms, and we
+// have a test to confirm that.
+INTERCEPTOR(void, mallinfo, __sanitizer_mallinfo *sret) {
+  REAL(memset)(sret, 0, sizeof(*sret));
+  __msan_unpoison(sret, sizeof(*sret));
+}
+
+INTERCEPTOR(int, mallopt, int cmd, int value) {
+  return -1;
+}
+
+INTERCEPTOR(void, malloc_stats, void) {
+  // FIXME: implement, but don't call REAL(malloc_stats)!
 }
 
 INTERCEPTOR(SIZE_T, strlen, const char *s) {
@@ -1341,14 +1367,6 @@ void __msan_clear_and_unpoison(void *a, uptr size) {
   PoisonShadow((uptr)a, size, 0);
 }
 
-u32 get_origin_if_poisoned(uptr a, uptr size) {
-  unsigned char *s = (unsigned char *)MEM_TO_SHADOW(a);
-  for (uptr i = 0; i < size; ++i)
-    if (s[i])
-      return *(u32 *)SHADOW_TO_ORIGIN((s + i) & ~3UL);
-  return 0;
-}
-
 void *__msan_memcpy(void *dest, const void *src, SIZE_T n) {
   ENSURE_MSAN_INITED();
   GET_STORE_STACK_TRACE;
@@ -1372,7 +1390,30 @@ void *__msan_memmove(void *dest, const void *src, SIZE_T n) {
   return res;
 }
 
+void __msan_unpoison_string(const char* s) {
+  if (!MEM_IS_APP(s)) return;
+  __msan_unpoison(s, REAL(strlen)(s) + 1);
+}
+
 namespace __msan {
+
+u32 GetOriginIfPoisoned(uptr addr, uptr size) {
+  unsigned char *s = (unsigned char *)MEM_TO_SHADOW(addr);
+  for (uptr i = 0; i < size; ++i)
+    if (s[i])
+      return *(u32 *)SHADOW_TO_ORIGIN((s + i) & ~3UL);
+  return 0;
+}
+
+void SetOriginIfPoisoned(uptr addr, uptr src_shadow, uptr size,
+                         u32 src_origin) {
+  uptr dst_s = MEM_TO_SHADOW(addr);
+  uptr src_s = src_shadow;
+  uptr src_s_end = src_s + size;
+
+  for (; src_s < src_s_end; ++dst_s, ++src_s)
+    if (*(u8 *)src_s) *(u32 *)SHADOW_TO_ORIGIN(dst_s &~3UL) = src_origin;
+}
 
 void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack) {
   if (!__msan_get_track_origins()) return;
@@ -1382,7 +1423,7 @@ void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack) {
   uptr beg = d & ~3UL;
   // Copy left unaligned origin if that memory is poisoned.
   if (beg < d) {
-    u32 o = get_origin_if_poisoned(beg, d - beg);
+    u32 o = GetOriginIfPoisoned(beg, d - beg);
     if (o) {
       if (__msan_get_track_origins() > 1) o = ChainOrigin(o, stack);
       *(u32 *)MEM_TO_ORIGIN(beg) = o;
@@ -1393,7 +1434,7 @@ void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack) {
   uptr end = (d + size + 3) & ~3UL;
   // Copy right unaligned origin if that memory is poisoned.
   if (end > d + size) {
-    u32 o = get_origin_if_poisoned(d + size, end - d - size);
+    u32 o = GetOriginIfPoisoned(d + size, end - d - size);
     if (o) {
       if (__msan_get_track_origins() > 1) o = ChainOrigin(o, stack);
       *(u32 *)MEM_TO_ORIGIN(end - 4) = o;
@@ -1459,6 +1500,11 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(calloc);
   INTERCEPT_FUNCTION(realloc);
   INTERCEPT_FUNCTION(free);
+  INTERCEPT_FUNCTION(cfree);
+  INTERCEPT_FUNCTION(malloc_usable_size);
+  INTERCEPT_FUNCTION(mallinfo);
+  INTERCEPT_FUNCTION(mallopt);
+  INTERCEPT_FUNCTION(malloc_stats);
   INTERCEPT_FUNCTION(fread);
   INTERCEPT_FUNCTION(fread_unlocked);
   INTERCEPT_FUNCTION(readlink);

@@ -222,8 +222,10 @@ FUNCTIONS.ios.x86_64h := $(FUNCTIONS.ios.x86_64)
 
 FUNCTIONS.osx	:= mulosi4 mulodi4 muloti4
 
-FUNCTIONS.profile_osx := GCDAProfiling PGOProfiling
-FUNCTIONS.profile_ios := GCDAProfiling PGOProfiling
+FUNCTIONS.profile_osx := GCDAProfiling InstrProfiling InstrProfilingBuffer \
+                         InstrProfilingFile InstrProfilingPlatformDarwin \
+                         InstrProfilingRuntime
+FUNCTIONS.profile_ios := $(FUNCTIONS.profile_osx)
 
 FUNCTIONS.asan_osx_dynamic := $(AsanFunctions) $(InterceptionFunctions) \
                               $(SanitizerCommonFunctions) \
