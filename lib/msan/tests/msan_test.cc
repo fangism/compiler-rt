@@ -1859,6 +1859,17 @@ TEST(MemorySanitizer, mbrtowc) {
   EXPECT_NOT_POISONED(wx);
 }
 
+TEST(MemorySanitizer, wcsftime) {
+  wchar_t x[100];
+  time_t t = time(NULL);
+  struct tm tms;
+  struct tm *tmres = localtime_r(&t, &tms);
+  ASSERT_NE((void *)0, tmres);
+  size_t res = wcsftime(x, sizeof(x) / sizeof(x[0]), L"%Y-%m-%d", tmres);
+  EXPECT_GT(res, 0UL);
+  EXPECT_EQ(res, wcslen(x));
+}
+
 TEST(MemorySanitizer, gettimeofday) {
   struct timeval tv;
   struct timezone tz;
@@ -2818,22 +2829,22 @@ TEST(MemorySanitizer, SmallStackThread) {
   ASSERT_EQ(0, res);
 }
 
-TEST(MemorySanitizer, PreAllocatedStackThread) {
+TEST(MemorySanitizer, SmallPreAllocatedStackThread) {
   pthread_attr_t attr;
   pthread_t t;
   int res;
   res = pthread_attr_init(&attr);
   ASSERT_EQ(0, res);
   void *stack;
-  const size_t kStackSize = 64 * 1024;
+  const size_t kStackSize = 16 * 1024;
   res = posix_memalign(&stack, 4096, kStackSize);
   ASSERT_EQ(0, res);
   res = pthread_attr_setstack(&attr, stack, kStackSize);
   ASSERT_EQ(0, res);
-  // A small self-allocated stack can not be extended by the tool.
-  // In this case pthread_create is expected to fail.
   res = pthread_create(&t, &attr, SmallStackThread_threadfn, NULL);
-  EXPECT_NE(0, res);
+  EXPECT_EQ(0, res);
+  res = pthread_join(t, NULL);
+  ASSERT_EQ(0, res);
   res = pthread_attr_destroy(&attr);
   ASSERT_EQ(0, res);
 }

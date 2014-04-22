@@ -9,15 +9,25 @@
 // RUN: %clangxx_asan -x c -DSO_NAME=f0 %s -shared -o %t-f0.so -fPIC
 // RUN: %clangxx_asan -x c -DSO_NAME=f1 %s -shared -o %t-f1.so -fPIC
 // RUN: %clangxx_asan -x c -DSO_NAME=f2 %s -shared -o %t-f2.so -fPIC
-// RUN: %clangxx_asan %s -o %t
+// RUN: %clangxx_asan %s -ldl -lpthread -o %t
 // RUN: %t 0 3
 // RUN: %t 2 3
-// RUN: ASAN_OPTIONS=verbosity=2147483647 %t 2 2 2>&1 | FileCheck %s
+// RUN: ASAN_OPTIONS=verbosity=2 %t 10 2 2>&1 | FileCheck %s
+// RUN: ASAN_OPTIONS=verbosity=2:intercept_tls_get_addr=1 %t 10 2 2>&1 | FileCheck %s
+// RUN: ASAN_OPTIONS=verbosity=2:intercept_tls_get_addr=0 %t 10 2 2>&1 | FileCheck %s --check-prefix=CHECK0
 // CHECK: __tls_get_addr
+// CHECK: Creating thread 0
 // CHECK: __tls_get_addr
+// CHECK: Creating thread 1
 // CHECK: __tls_get_addr
+// CHECK: Creating thread 2
 // CHECK: __tls_get_addr
+// CHECK: Creating thread 3
 // CHECK: __tls_get_addr
+// Make sure that TLS slots don't leak
+// CHECK-NOT: num_live_dtls 5
+//
+// CHECK0-NOT: __tls_get_addr
 /*
 cc=your-compiler
 
@@ -88,6 +98,7 @@ int main(int argc, char *argv[]) {
     int i;
     for (i = 0; i < num_threads; i++) {
       pthread_t t;
+      fprintf(stderr, "Creating thread %d\n", i);
       pthread_create(&t, 0, PrintStuff, 0);
       pthread_join(t, 0);
     }

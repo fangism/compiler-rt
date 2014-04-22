@@ -50,7 +50,9 @@ struct CommonFlags {
   uptr clear_shadow_mmap_threshold;
   const char *color;
   bool legacy_pthread_cond;
+  bool intercept_tls_get_addr;
   bool help;
+  uptr mmap_limit_mb;
 };
 
 inline CommonFlags *common_flags() {

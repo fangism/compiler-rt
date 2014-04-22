@@ -2653,145 +2653,6 @@ INTERCEPTOR(int, pthread_mutex_unlock, void *m) {
 #define INIT_PTHREAD_MUTEX_UNLOCK
 #endif
 
-#if SANITIZER_INTERCEPT_PTHREAD_COND
-// Problem:
-// NPTL implementation of pthread_cond has 2 versions (2.2.5 and 2.3.2).
-// pthread_cond_t has different size in the different versions.
-// If call new REAL functions for old pthread_cond_t, they will corrupt memory
-// after pthread_cond_t (old cond is smaller).
-// If we call old REAL functions for new pthread_cond_t, we will lose  some
-// functionality (e.g. old functions do not support waiting against
-// CLOCK_REALTIME).
-// Proper handling would require to have 2 versions of interceptors as well.
-// But this is messy, in particular requires linker scripts when sanitizer
-// runtime is linked into a shared library.
-// Instead we assume we don't have dynamic libraries built against old
-// pthread (2.2.5 is dated by 2002). And provide legacy_pthread_cond flag
-// that allows to work with old libraries (but this mode does not support
-// some features, e.g. pthread_condattr_getpshared).
-static void *init_cond(void *c, bool force = false) {
-  // sizeof(pthread_cond_t) >= sizeof(uptr) in both versions.
-  // So we allocate additional memory on the side large enough to hold
-  // any pthread_cond_t object. Always call new REAL functions, but pass
-  // the aux object to them.
-  // Note: the code assumes that PTHREAD_COND_INITIALIZER initializes
-  // first word of pthread_cond_t to zero.
-  // It's all relevant only for linux.
-  if (!common_flags()->legacy_pthread_cond)
-    return c;
-  atomic_uintptr_t *p = (atomic_uintptr_t*)c;
-  uptr cond = atomic_load(p, memory_order_acquire);
-  if (!force && cond != 0)
-    return (void*)cond;
-  void *newcond = WRAP(malloc)(pthread_cond_t_sz);
-  internal_memset(newcond, 0, pthread_cond_t_sz);
-  if (atomic_compare_exchange_strong(p, &cond, (uptr)newcond,
-      memory_order_acq_rel))
-    return newcond;
-  WRAP(free)(newcond);
-  return (void*)cond;
-}
-
-struct CondMutexUnlockCtx {
-  void *ctx;
-  void *m;
-};
-
-static void cond_mutex_unlock(CondMutexUnlockCtx *arg) {
-  COMMON_INTERCEPTOR_MUTEX_LOCK(arg->ctx, arg->m);
-}
-
-namespace __sanitizer {
-int call_pthread_cancel_with_cleanup(int(*fn)(void *c, void *m,
-    void *abstime), void *c, void *m, void *abstime,
-    void(*cleanup)(void *arg), void *arg);
-}  // namespace __sanitizer
-
-INTERCEPTOR(int, pthread_cond_init, void *c, void *a) {
-  void *cond = init_cond(c, true);
-  void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_init, cond, a);
-  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, c, sizeof(uptr));
-  return REAL(pthread_cond_init)(cond, a);
-}
-
-INTERCEPTOR(int, pthread_cond_wait, void *c, void *m) {
-  void *cond = init_cond(c);
-  void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_wait, cond, m);
-  COMMON_INTERCEPTOR_MUTEX_UNLOCK(ctx, m);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
-  CondMutexUnlockCtx arg = {ctx, m};
-  // This ensures that we handle mutex lock even in case of pthread_cancel.
-  // See test/tsan/cond_cancel.cc.
-  int res = __sanitizer::call_pthread_cancel_with_cleanup(
-      (int(*)(void *c, void *m, void *abstime))REAL(pthread_cond_wait),
-      cond, m, 0, (void(*)(void *arg))cond_mutex_unlock, &arg);
-  if (res == errno_EOWNERDEAD)
-    COMMON_INTERCEPTOR_MUTEX_REPAIR(ctx, m);
-  COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m);
-  return res;
-}
-
-INTERCEPTOR(int, pthread_cond_timedwait, void *c, void *m, void *abstime) {
-  void *cond = init_cond(c);
-  void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_timedwait, cond, m, abstime);
-  COMMON_INTERCEPTOR_MUTEX_UNLOCK(ctx, m);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
-  CondMutexUnlockCtx arg = {ctx, m};
-  // This ensures that we handle mutex lock even in case of pthread_cancel.
-  // See test/tsan/cond_cancel.cc.
-  int res = __sanitizer::call_pthread_cancel_with_cleanup(
-      REAL(pthread_cond_timedwait), cond, m, abstime,
-      (void(*)(void *arg))cond_mutex_unlock, &arg);
-  if (res == errno_EOWNERDEAD)
-    COMMON_INTERCEPTOR_MUTEX_REPAIR(ctx, m);
-  COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m);
-  return res;
-}
-
-INTERCEPTOR(int, pthread_cond_signal, void *c) {
-  void *cond = init_cond(c);
-  void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_signal, cond);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
-  return REAL(pthread_cond_signal)(cond);
-}
-
-INTERCEPTOR(int, pthread_cond_broadcast, void *c) {
-  void *cond = init_cond(c);
-  void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_broadcast, cond);
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, c, sizeof(uptr));
-  return REAL(pthread_cond_broadcast)(cond);
-}
-
-INTERCEPTOR(int, pthread_cond_destroy, void *c) {
-  void *cond = init_cond(c);
-  void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, pthread_cond_destroy, cond);
-  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, c, sizeof(uptr));
-  int res = REAL(pthread_cond_destroy)(cond);
-  if (common_flags()->legacy_pthread_cond) {
-    // Free our aux cond and zero the pointer to not leave dangling pointers.
-    WRAP(free)(cond);
-    atomic_store((atomic_uintptr_t*)c, 0, memory_order_relaxed);
-  }
-  return res;
-}
-
-#define INIT_PTHREAD_COND \
-  INTERCEPT_FUNCTION_VER(pthread_cond_init, "GLIBC_2.3.2"); \
-  INTERCEPT_FUNCTION_VER(pthread_cond_signal, "GLIBC_2.3.2"); \
-  INTERCEPT_FUNCTION_VER(pthread_cond_broadcast, "GLIBC_2.3.2"); \
-  INTERCEPT_FUNCTION_VER(pthread_cond_wait, "GLIBC_2.3.2"); \
-  INTERCEPT_FUNCTION_VER(pthread_cond_timedwait, "GLIBC_2.3.2"); \
-  INTERCEPT_FUNCTION_VER(pthread_cond_destroy, "GLIBC_2.3.2")
-#else
-#define INIT_PTHREAD_COND
-#endif
-
 #if SANITIZER_INTERCEPT_GETMNTENT || SANITIZER_INTERCEPT_GETMNTENT_R
 static void write_mntent(void *ctx, __sanitizer_mntent *mnt) {
   COMMON_INTERCEPTOR_WRITE_RANGE(ctx, mnt, sizeof(*mnt));
@@ -3712,6 +3573,156 @@ INTERCEPTOR(int, ftime, __sanitizer_timeb *tp) {
 #define INIT_FTIME
 #endif  // SANITIZER_INTERCEPT_FTIME
 
+#if SANITIZER_INTERCEPT_XDR
+INTERCEPTOR(void, xdrmem_create, __sanitizer_XDR *xdrs, uptr addr,
+            unsigned size, int op) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, xdrmem_create, xdrs, addr, size, op);
+  REAL(xdrmem_create)(xdrs, addr, size, op);
+  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, xdrs, sizeof(*xdrs));
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(xdrs->x_ops, sizeof(*xdrs->x_ops));
+  if (op == __sanitizer_XDR_ENCODE) {
+    // It's not obvious how much data individual xdr_ routines write.
+    // Simply unpoison the entire target buffer in advance.
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, (void *)addr, size);
+  }
+}
+
+INTERCEPTOR(void, xdrstdio_create, __sanitizer_XDR *xdrs, void *file, int op) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, xdrstdio_create, xdrs, file, op);
+  REAL(xdrstdio_create)(xdrs, file, op);
+  COMMON_INTERCEPTOR_WRITE_RANGE(ctx, xdrs, sizeof(*xdrs));
+  COMMON_INTERCEPTOR_INITIALIZE_RANGE(xdrs->x_ops, sizeof(*xdrs->x_ops));
+}
+
+#define XDR_INTERCEPTOR(F, T)                             \
+  INTERCEPTOR(int, F, __sanitizer_XDR *xdrs, T *p) {      \
+    void *ctx;                                            \
+    COMMON_INTERCEPTOR_ENTER(ctx, F, xdrs, p);            \
+    if (p && xdrs->x_op == __sanitizer_XDR_ENCODE)        \
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, p, sizeof(*p));  \
+    int res = REAL(F)(xdrs, p);                           \
+    if (res && p && xdrs->x_op == __sanitizer_XDR_DECODE) \
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p, sizeof(*p)); \
+    return res;                                           \
+  }
+
+XDR_INTERCEPTOR(xdr_short, short)
+XDR_INTERCEPTOR(xdr_u_short, unsigned short)
+XDR_INTERCEPTOR(xdr_int, int)
+XDR_INTERCEPTOR(xdr_u_int, unsigned)
+XDR_INTERCEPTOR(xdr_long, long)
+XDR_INTERCEPTOR(xdr_u_long, unsigned long)
+XDR_INTERCEPTOR(xdr_hyper, long long)
+XDR_INTERCEPTOR(xdr_u_hyper, unsigned long long)
+XDR_INTERCEPTOR(xdr_longlong_t, long long)
+XDR_INTERCEPTOR(xdr_u_longlong_t, unsigned long long)
+XDR_INTERCEPTOR(xdr_int8_t, u8)
+XDR_INTERCEPTOR(xdr_uint8_t, u8)
+XDR_INTERCEPTOR(xdr_int16_t, u16)
+XDR_INTERCEPTOR(xdr_uint16_t, u16)
+XDR_INTERCEPTOR(xdr_int32_t, u32)
+XDR_INTERCEPTOR(xdr_uint32_t, u32)
+XDR_INTERCEPTOR(xdr_int64_t, u64)
+XDR_INTERCEPTOR(xdr_uint64_t, u64)
+XDR_INTERCEPTOR(xdr_quad_t, long long)
+XDR_INTERCEPTOR(xdr_u_quad_t, unsigned long long)
+XDR_INTERCEPTOR(xdr_bool, bool)
+XDR_INTERCEPTOR(xdr_enum, int)
+XDR_INTERCEPTOR(xdr_char, char)
+XDR_INTERCEPTOR(xdr_u_char, unsigned char)
+XDR_INTERCEPTOR(xdr_float, float)
+XDR_INTERCEPTOR(xdr_double, double)
+
+// FIXME: intercept xdr_array, opaque, union, vector, reference, pointer,
+// wrapstring, sizeof
+
+INTERCEPTOR(int, xdr_bytes, __sanitizer_XDR *xdrs, char **p, unsigned *sizep,
+            unsigned maxsize) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, xdr_bytes, xdrs, p, sizep, maxsize);
+  if (p && sizep && xdrs->x_op == __sanitizer_XDR_ENCODE) {
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, p, sizeof(*p));
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, sizep, sizeof(*sizep));
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, *p, *sizep);
+  }
+  int res = REAL(xdr_bytes)(xdrs, p, sizep, maxsize);
+  if (p && sizep && xdrs->x_op == __sanitizer_XDR_DECODE) {
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p, sizeof(*p));
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, sizep, sizeof(*sizep));
+    if (res && *p && *sizep) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, *p, *sizep);
+  }
+  return res;
+}
+
+INTERCEPTOR(int, xdr_string, __sanitizer_XDR *xdrs, char **p,
+            unsigned maxsize) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, xdr_string, xdrs, p, maxsize);
+  if (p && xdrs->x_op == __sanitizer_XDR_ENCODE) {
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, p, sizeof(*p));
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, *p, REAL(strlen)(*p) + 1);
+  }
+  int res = REAL(xdr_string)(xdrs, p, maxsize);
+  if (p && xdrs->x_op == __sanitizer_XDR_DECODE) {
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p, sizeof(*p));
+    if (res && *p)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, *p, REAL(strlen)(*p) + 1);
+  }
+  return res;
+}
+
+#define INIT_XDR                               \
+  COMMON_INTERCEPT_FUNCTION(xdrmem_create);    \
+  COMMON_INTERCEPT_FUNCTION(xdrstdio_create);  \
+  COMMON_INTERCEPT_FUNCTION(xdr_short);        \
+  COMMON_INTERCEPT_FUNCTION(xdr_u_short);      \
+  COMMON_INTERCEPT_FUNCTION(xdr_int);          \
+  COMMON_INTERCEPT_FUNCTION(xdr_u_int);        \
+  COMMON_INTERCEPT_FUNCTION(xdr_long);         \
+  COMMON_INTERCEPT_FUNCTION(xdr_u_long);       \
+  COMMON_INTERCEPT_FUNCTION(xdr_hyper);        \
+  COMMON_INTERCEPT_FUNCTION(xdr_u_hyper);      \
+  COMMON_INTERCEPT_FUNCTION(xdr_longlong_t);   \
+  COMMON_INTERCEPT_FUNCTION(xdr_u_longlong_t); \
+  COMMON_INTERCEPT_FUNCTION(xdr_int8_t);       \
+  COMMON_INTERCEPT_FUNCTION(xdr_uint8_t);      \
+  COMMON_INTERCEPT_FUNCTION(xdr_int16_t);      \
+  COMMON_INTERCEPT_FUNCTION(xdr_uint16_t);     \
+  COMMON_INTERCEPT_FUNCTION(xdr_int32_t);      \
+  COMMON_INTERCEPT_FUNCTION(xdr_uint32_t);     \
+  COMMON_INTERCEPT_FUNCTION(xdr_int64_t);      \
+  COMMON_INTERCEPT_FUNCTION(xdr_uint64_t);     \
+  COMMON_INTERCEPT_FUNCTION(xdr_quad_t);       \
+  COMMON_INTERCEPT_FUNCTION(xdr_u_quad_t);     \
+  COMMON_INTERCEPT_FUNCTION(xdr_bool);         \
+  COMMON_INTERCEPT_FUNCTION(xdr_enum);         \
+  COMMON_INTERCEPT_FUNCTION(xdr_char);         \
+  COMMON_INTERCEPT_FUNCTION(xdr_u_char);       \
+  COMMON_INTERCEPT_FUNCTION(xdr_float);        \
+  COMMON_INTERCEPT_FUNCTION(xdr_double);       \
+  COMMON_INTERCEPT_FUNCTION(xdr_bytes);        \
+  COMMON_INTERCEPT_FUNCTION(xdr_string);
+#else
+#define INIT_XDR
+#endif  // SANITIZER_INTERCEPT_XDR
+
+#if SANITIZER_INTERCEPT_TSEARCH
+INTERCEPTOR(void *, tsearch, void *key, void **rootp,
+            int (*compar)(const void *, const void *)) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, tsearch, key, rootp, compar);
+  void *res = REAL(tsearch)(key, rootp, compar);
+  if (res && *(void **)res == key)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, res, sizeof(void *));
+  return res;
+}
+#define INIT_TSEARCH COMMON_INTERCEPT_FUNCTION(tsearch);
+#else
+#define INIT_TSEARCH
+#endif
+
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_TEXTDOMAIN;                         \
   INIT_STRCMP;                             \
@@ -3804,7 +3815,6 @@ INTERCEPTOR(int, ftime, __sanitizer_timeb *tp) {
   INIT__EXIT;                              \
   INIT_PTHREAD_MUTEX_LOCK;                 \
   INIT_PTHREAD_MUTEX_UNLOCK;               \
-  INIT_PTHREAD_COND;                       \
   INIT_GETMNTENT;                          \
   INIT_GETMNTENT_R;                        \
   INIT_STATFS;                             \
@@ -3841,5 +3851,7 @@ INTERCEPTOR(int, ftime, __sanitizer_timeb *tp) {
   INIT_CAPGET;                             \
   INIT_AEABI_MEM;                          \
   INIT___BZERO;                            \
-  INIT_FTIME;
+  INIT_FTIME;                              \
+  INIT_XDR;                                \
+  INIT_TSEARCH;
 /**/

@@ -29,6 +29,7 @@
 #include "lsan/lsan_common.h"
 
 int __asan_option_detect_stack_use_after_return;  // Global interface symbol.
+uptr *__asan_test_only_reported_buggy_pointer;  // Used only for testing asan.
 
 namespace __asan {
 
@@ -219,13 +220,20 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
       "If non-zero, try to detect operations like <, <=, >, >= and - on "
       "invalid pointer pairs (e.g. when pointers belong to different objects). "
       "The bigger the value the harder we try.");
+
+  ParseFlag(str, &f->detect_container_overflow,
+      "detect_container_overflow",
+      "If true, honor the container overflow  annotations. "
+      "See https://code.google.com/p/address-sanitizer/wiki/ContainerOverflow");
 }
 
 void InitializeFlags(Flags *f, const char *env) {
   CommonFlags *cf = common_flags();
   SetCommonFlagsDefaults(cf);
+  cf->detect_leaks = CAN_SANITIZE_LEAKS;
   cf->external_symbolizer_path = GetEnv("ASAN_SYMBOLIZER_PATH");
   cf->malloc_context_size = kDefaultMallocContextSize;
+  cf->intercept_tls_get_addr = true;
 
   internal_memset(f, 0, sizeof(*f));
   f->quarantine_size = (ASAN_LOW_MEMORY) ? 1UL << 26 : 1UL << 28;
@@ -265,6 +273,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->strict_init_order = false;
   f->start_deactivated = false;
   f->detect_invalid_pointer_pairs = 0;
+  f->detect_container_overflow = true;
 
   // Override from compile definition.
   ParseFlagsFromString(f, MaybeUseAsanDefaultOptionsCompileDefiniton());
@@ -280,13 +289,11 @@ void InitializeFlags(Flags *f, const char *env) {
     PrintFlagDescriptions();
   }
 
-#if !CAN_SANITIZE_LEAKS
-  if (cf->detect_leaks) {
+  if (!CAN_SANITIZE_LEAKS && cf->detect_leaks) {
     Report("%s: detect_leaks is not supported on this platform.\n",
            SanitizerToolName);
     cf->detect_leaks = false;
   }
-#endif
 
   // Make "strict_init_order" imply "check_initialization_order".
   // TODO(samsonov): Use a single runtime flag for an init-order checker.
@@ -327,6 +334,7 @@ static void ReserveShadowMemoryRange(uptr beg, uptr end) {
   CHECK_EQ((beg % GetPageSizeCached()), 0);
   CHECK_EQ(((end + 1) % GetPageSizeCached()), 0);
   uptr size = end - beg + 1;
+  DecreaseTotalMmap(size);  // Don't count the shadow against mmap_limit_mb.
   void *res = MmapFixedNoReserve(beg, size);
   if (res != (void*)beg) {
     Report("ReserveShadowMemoryRange failed while trying to map 0x%zx bytes. "
@@ -371,6 +379,53 @@ void __asan_report_ ## type ## _n(uptr addr, uptr size) {      \
 
 ASAN_REPORT_ERROR_N(load, false)
 ASAN_REPORT_ERROR_N(store, true)
+
+#define ASAN_MEMORY_ACCESS_CALLBACK(type, is_write, size)                      \
+  extern "C" NOINLINE INTERFACE_ATTRIBUTE void __asan_##type##size(uptr addr); \
+  void __asan_##type##size(uptr addr) {                                        \
+    uptr sp = MEM_TO_SHADOW(addr);                                             \
+    uptr s = size <= SHADOW_GRANULARITY ? *reinterpret_cast<u8 *>(sp)          \
+                                        : *reinterpret_cast<u16 *>(sp);        \
+    if (UNLIKELY(s)) {                                                         \
+      if (UNLIKELY(size >= SHADOW_GRANULARITY ||                               \
+                   ((s8)((addr & (SHADOW_GRANULARITY - 1)) + size - 1)) >=     \
+                       (s8)s)) {                                               \
+        if (__asan_test_only_reported_buggy_pointer) {                         \
+          *__asan_test_only_reported_buggy_pointer = addr;                     \
+        } else {                                                               \
+          GET_CALLER_PC_BP_SP;                                                 \
+          __asan_report_error(pc, bp, sp, addr, is_write, size);               \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  }
+
+ASAN_MEMORY_ACCESS_CALLBACK(load, false, 1)
+ASAN_MEMORY_ACCESS_CALLBACK(load, false, 2)
+ASAN_MEMORY_ACCESS_CALLBACK(load, false, 4)
+ASAN_MEMORY_ACCESS_CALLBACK(load, false, 8)
+ASAN_MEMORY_ACCESS_CALLBACK(load, false, 16)
+ASAN_MEMORY_ACCESS_CALLBACK(store, true, 1)
+ASAN_MEMORY_ACCESS_CALLBACK(store, true, 2)
+ASAN_MEMORY_ACCESS_CALLBACK(store, true, 4)
+ASAN_MEMORY_ACCESS_CALLBACK(store, true, 8)
+ASAN_MEMORY_ACCESS_CALLBACK(store, true, 16)
+
+extern "C"
+NOINLINE INTERFACE_ATTRIBUTE void __asan_loadN(uptr addr, uptr size) {
+  if (__asan_region_is_poisoned(addr, size)) {
+    GET_CALLER_PC_BP_SP;
+    __asan_report_error(pc, bp, sp, addr, false, size);
+  }
+}
+
+extern "C"
+NOINLINE INTERFACE_ATTRIBUTE void __asan_storeN(uptr addr, uptr size) {
+  if (__asan_region_is_poisoned(addr, size)) {
+    GET_CALLER_PC_BP_SP;
+    __asan_report_error(pc, bp, sp, addr, true, size);
+  }
+}
 
 // Force the linker to keep the symbols for various ASan interface functions.
 // We want to keep those in the executable in order to let the instrumented

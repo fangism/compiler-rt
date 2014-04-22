@@ -40,11 +40,11 @@ void SetCommonFlagsDefaults(CommonFlags *f) {
   f->malloc_context_size = 1;
   f->log_path = "stderr";
   f->verbosity = 0;
-  f->detect_leaks = false;
+  f->detect_leaks = true;
   f->leak_check_at_exit = true;
   f->allocator_may_return_null = false;
   f->print_summary = true;
-  f->check_printf = false;
+  f->check_printf = true;
   // TODO(glider): tools may want to set different defaults for handle_segv.
   f->handle_segv = SANITIZER_NEEDS_SEGV;
   f->allow_user_segv_handler = false;
@@ -53,6 +53,7 @@ void SetCommonFlagsDefaults(CommonFlags *f) {
   f->clear_shadow_mmap_threshold = 64 * 1024;
   f->color = "auto";
   f->legacy_pthread_cond = false;
+  f->intercept_tls_get_addr = false;
 }
 
 void ParseCommonFlagsFromString(CommonFlags *f, const char *str) {
@@ -115,7 +116,12 @@ void ParseCommonFlagsFromString(CommonFlags *f, const char *str) {
       "Colorize reports: (always|never|auto).");
   ParseFlag(str, &f->legacy_pthread_cond, "legacy_pthread_cond",
       "Enables support for dynamic libraries linked with libpthread 2.2.5.");
+  ParseFlag(str, &f->intercept_tls_get_addr, "intercept_tls_get_addr",
+            "Intercept __tls_get_addr.");
   ParseFlag(str, &f->help, "help", "Print the flag descriptions.");
+  ParseFlag(str, &f->mmap_limit_mb, "mmap_limit_mb",
+            "Limit the amount of mmap-ed memory (excluding shadow) in Mb; "
+            "not a user-facing flag, used mosly for testing the tools");
 
   // Do a sanity check for certain flags.
   if (f->malloc_context_size < 1)

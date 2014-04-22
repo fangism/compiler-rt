@@ -141,7 +141,7 @@ static void PrintLegend(InternalScopedString *str) {
                   kAsanInitializationOrderMagic);
   PrintShadowByte(str, "  Poisoned by user:        ",
                   kAsanUserPoisonedMemoryMagic);
-  PrintShadowByte(str, "  Contiguous container OOB:",
+  PrintShadowByte(str, "  Container overflow:      ",
                   kAsanContiguousContainerOOBMagic);
   PrintShadowByte(str, "  ASan internal:           ", kAsanInternalHeapMagic);
 }
@@ -701,6 +701,19 @@ void ReportStringFunctionMemoryRangesOverlap(
   ReportErrorSummary(bug_type, stack);
 }
 
+void ReportStringFunctionSizeOverflow(uptr offset, uptr size,
+                                      StackTrace *stack) {
+  ScopedInErrorReport in_report;
+  Decorator d;
+  const char *bug_type = "negative-size-param";
+  Printf("%s", d.Warning());
+  Report("ERROR: AddressSanitizer: %s: (size=%zd)\n", bug_type, size);
+  Printf("%s", d.EndWarning());
+  stack->Print();
+  DescribeAddress(offset, size);
+  ReportErrorSummary(bug_type, stack);
+}
+
 void ReportBadParamsToAnnotateContiguousContainer(uptr beg, uptr end,
                                                   uptr old_mid, uptr new_mid,
                                                   StackTrace *stack) {
@@ -784,8 +797,8 @@ void ReportMacCfReallocUnknown(
 // --------------------------- Interface --------------------- {{{1
 using namespace __asan;  // NOLINT
 
-void __asan_report_error(uptr pc, uptr bp, uptr sp,
-                         uptr addr, bool is_write, uptr access_size) {
+void __asan_report_error(uptr pc, uptr bp, uptr sp, uptr addr, int is_write,
+                         uptr access_size) {
   ScopedInErrorReport in_report;
 
   // Determine the error type.
