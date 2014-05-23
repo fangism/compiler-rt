@@ -183,7 +183,9 @@ void ReExec();
 bool StackSizeIsUnlimited();
 void SetStackSizeLimitInBytes(uptr limit);
 void AdjustStackSize(void *attr);
-void PrepareForSandboxing();
+void PrepareForSandboxing(__sanitizer_sandbox_arguments *args);
+void CovPrepareForSandboxing(__sanitizer_sandbox_arguments *args);
+void SetSandboxingCallback(void (*f)());
 
 void InitTlsSize();
 uptr GetTlsSize();
@@ -539,5 +541,10 @@ inline void *operator new(__sanitizer::operator_new_size_type size,
                           __sanitizer::LowLevelAllocator &alloc) {
   return alloc.Allocate(size);
 }
+
+struct StackDepotStats {
+  uptr n_uniq_ids;
+  uptr allocated;
+};
 
 #endif  // SANITIZER_COMMON_H

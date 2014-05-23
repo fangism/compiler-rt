@@ -390,7 +390,7 @@ void GetThreadStackAndTls(bool main, uptr *stk_addr, uptr *stk_size,
 }
 #endif  // SANITIZER_GO
 
-void PrepareForSandboxing() {
+void PrepareForSandboxing(__sanitizer_sandbox_arguments *args) {
   // Some kinds of sandboxes may forbid filesystem access, so we won't be able
   // to read the file mappings from /proc/self/maps. Luckily, neither the
   // process will be able to load additional libraries, so it's fine to use the
@@ -400,6 +400,7 @@ void PrepareForSandboxing() {
 #if !SANITIZER_GO
   if (Symbolizer *sym = Symbolizer::GetOrNull())
     sym->PrepareForSandboxing();
+  CovPrepareForSandboxing(args);
 #endif
 }
 
@@ -453,8 +454,13 @@ void BlockingMutex::CheckLocked() {
 // Note that getdents64 uses a different structure format. We only provide the
 // 32-bit syscall here.
 struct linux_dirent {
+#if SANITIZER_X32
+  u64 d_ino;
+  u64 d_off;
+#else
   unsigned long      d_ino;
   unsigned long      d_off;
+#endif
   unsigned short     d_reclen;
   char               d_name[256];
 };
@@ -499,6 +505,10 @@ uptr internal_prctl(int option, uptr arg2, uptr arg3, uptr arg4, uptr arg5) {
 uptr internal_sigaltstack(const struct sigaltstack *ss,
                          struct sigaltstack *oss) {
   return internal_syscall(SYSCALL(sigaltstack), (uptr)ss, (uptr)oss);
+}
+
+int internal_fork() {
+  return internal_syscall(SYSCALL(fork));
 }
 
 #if SANITIZER_LINUX
@@ -550,8 +560,9 @@ uptr internal_sigprocmask(int how, __sanitizer_sigset_t *set,
 #else
   __sanitizer_kernel_sigset_t *k_set = (__sanitizer_kernel_sigset_t *)set;
   __sanitizer_kernel_sigset_t *k_oldset = (__sanitizer_kernel_sigset_t *)oldset;
-  return internal_syscall(SYSCALL(rt_sigprocmask), (uptr)how, &k_set->sig[0],
-      &k_oldset->sig[0], sizeof(__sanitizer_kernel_sigset_t));
+  return internal_syscall(SYSCALL(rt_sigprocmask), (uptr)how,
+                          (uptr)&k_set->sig[0], (uptr)&k_oldset->sig[0],
+                          sizeof(__sanitizer_kernel_sigset_t));
 #endif
 }
 

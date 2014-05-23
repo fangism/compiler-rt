@@ -19,10 +19,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-  /* Returns a string describing a stack origin.
-     Return NULL if the origin is invalid, or is not a stack origin. */
-  const char *__msan_get_origin_descr_if_stack(uint32_t id);
-
   /* Set raw origin for the memory range. */
   void __msan_set_origin(const volatile void *a, size_t size, uint32_t origin);
 
@@ -77,6 +73,10 @@ extern "C" {
   /* Print shadow and origin for the memory range to stderr in a human-readable
      format. */
   void __msan_print_shadow(const volatile void *x, size_t size);
+
+  /* Print shadow for the memory range to stderr in a minimalistic
+     human-readable format. */
+  void __msan_dump_shadow(const volatile void *x, size_t size);
 
   /* Returns true if running under a dynamic tool (DynamoRio-based). */
   int  __msan_has_dynamic_component();

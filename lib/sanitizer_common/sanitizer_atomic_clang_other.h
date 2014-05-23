@@ -54,7 +54,8 @@ INLINE typename T::Type atomic_load(
     // Gross, but simple and reliable.
     // Assume that it is not in read-only memory.
     typedef typename T::Type v_type;
-    v = __sync_fetch_and_add((v_type volatile*)&a->val_dont_use, v_type(0));
+    v = __sync_fetch_and_add(
+        const_cast<v_type volatile *>(&a->val_dont_use), v_type(0));
   }
   return v;
 }

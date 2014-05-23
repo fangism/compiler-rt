@@ -118,13 +118,15 @@ DECLARE_REAL_AND_INTERCEPTOR(void, free, void *)
 #define COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ptr, size) \
   ASAN_WRITE_RANGE(ptr, size)
 #define COMMON_INTERCEPTOR_READ_RANGE(ctx, ptr, size) ASAN_READ_RANGE(ptr, size)
-#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)                       \
-  do {                                                                 \
-    if (asan_init_is_running) return REAL(func)(__VA_ARGS__);          \
-    ctx = 0;                                                           \
-    (void) ctx;                                                        \
-    if (SANITIZER_MAC && !asan_inited) return REAL(func)(__VA_ARGS__); \
-    ENSURE_ASAN_INITED();                                              \
+#define COMMON_INTERCEPTOR_ENTER(ctx, func, ...)                               \
+  do {                                                                         \
+    if (asan_init_is_running)                                                  \
+      return REAL(func)(__VA_ARGS__);                                          \
+    ctx = 0;                                                                   \
+    (void) ctx;                                                                \
+    if (SANITIZER_MAC && UNLIKELY(!asan_inited))                               \
+      return REAL(func)(__VA_ARGS__);                                          \
+    ENSURE_ASAN_INITED();                                                      \
   } while (false)
 #define COMMON_INTERCEPTOR_FD_ACQUIRE(ctx, fd) \
   do {                                         \
@@ -292,6 +294,7 @@ INTERCEPTOR(void, __cxa_throw, void *a, void *b, void *c) {
 }
 #endif
 
+#if ASAN_INTERCEPT_MLOCKX
 // intercept mlock and friends.
 // Since asan maps 16T of RAM, mlock is completely unfriendly to asan.
 // All functions return 0 (success).
@@ -323,13 +326,14 @@ INTERCEPTOR(int, munlockall, void) {
   MlockIsUnsupported();
   return 0;
 }
+#endif
 
 static inline int CharCmp(unsigned char c1, unsigned char c2) {
   return (c1 == c2) ? 0 : (c1 < c2) ? -1 : 1;
 }
 
 INTERCEPTOR(int, memcmp, const void *a1, const void *a2, uptr size) {
-  if (!asan_inited) return internal_memcmp(a1, a2, size);
+  if (UNLIKELY(!asan_inited)) return internal_memcmp(a1, a2, size);
   ENSURE_ASAN_INITED();
   if (flags()->replace_intrin) {
     if (flags()->strict_memcmp) {
@@ -357,7 +361,7 @@ INTERCEPTOR(int, memcmp, const void *a1, const void *a2, uptr size) {
 }
 
 void *__asan_memcpy(void *to, const void *from, uptr size) {
-  if (!asan_inited) return internal_memcpy(to, from, size);
+  if (UNLIKELY(!asan_inited)) return internal_memcpy(to, from, size);
   // memcpy is called during __asan_init() from the internals
   // of printf(...).
   if (asan_init_is_running) {
@@ -377,7 +381,7 @@ void *__asan_memcpy(void *to, const void *from, uptr size) {
 }
 
 void *__asan_memset(void *block, int c, uptr size) {
-  if (!asan_inited) return internal_memset(block, c, size);
+  if (UNLIKELY(!asan_inited)) return internal_memset(block, c, size);
   // memset is called inside Printf.
   if (asan_init_is_running) {
     return REAL(memset)(block, c, size);
@@ -390,7 +394,7 @@ void *__asan_memset(void *block, int c, uptr size) {
 }
 
 void *__asan_memmove(void *to, const void *from, uptr size) {
-  if (!asan_inited)
+  if (UNLIKELY(!asan_inited))
     return internal_memmove(to, from, size);
   ENSURE_ASAN_INITED();
   if (flags()->replace_intrin) {
@@ -423,7 +427,7 @@ INTERCEPTOR(void*, memset, void *block, int c, uptr size) {
 }
 
 INTERCEPTOR(char*, strchr, const char *str, int c) {
-  if (!asan_inited) return internal_strchr(str, c);
+  if (UNLIKELY(!asan_inited)) return internal_strchr(str, c);
   // strchr is called inside create_purgeable_zone() when MallocGuardEdges=1 is
   // used.
   if (asan_init_is_running) {
@@ -492,7 +496,7 @@ INTERCEPTOR(char*, strncat, char *to, const char *from, uptr size) {
 
 INTERCEPTOR(char*, strcpy, char *to, const char *from) {  // NOLINT
 #if SANITIZER_MAC
-  if (!asan_inited) return REAL(strcpy)(to, from);  // NOLINT
+  if (UNLIKELY(!asan_inited)) return REAL(strcpy)(to, from);  // NOLINT
 #endif
   // strcpy is called from malloc_default_purgeable_zone()
   // in __asan::ReplaceSystemAlloc() on Mac.
@@ -511,7 +515,7 @@ INTERCEPTOR(char*, strcpy, char *to, const char *from) {  // NOLINT
 
 #if ASAN_INTERCEPT_STRDUP
 INTERCEPTOR(char*, strdup, const char *s) {
-  if (!asan_inited) return internal_strdup(s);
+  if (UNLIKELY(!asan_inited)) return internal_strdup(s);
   ENSURE_ASAN_INITED();
   uptr length = REAL(strlen)(s);
   if (flags()->replace_str) {
@@ -525,7 +529,7 @@ INTERCEPTOR(char*, strdup, const char *s) {
 #endif
 
 INTERCEPTOR(uptr, strlen, const char *s) {
-  if (!asan_inited) return internal_strlen(s);
+  if (UNLIKELY(!asan_inited)) return internal_strlen(s);
   // strlen is called from malloc_default_purgeable_zone()
   // in __asan::ReplaceSystemAlloc() on Mac.
   if (asan_init_is_running) {
@@ -607,7 +611,7 @@ INTERCEPTOR(long, strtol, const char *nptr,  // NOLINT
 
 INTERCEPTOR(int, atoi, const char *nptr) {
 #if SANITIZER_MAC
-  if (!asan_inited) return REAL(atoi)(nptr);
+  if (UNLIKELY(!asan_inited)) return REAL(atoi)(nptr);
 #endif
   ENSURE_ASAN_INITED();
   if (!flags()->replace_str) {
@@ -626,7 +630,7 @@ INTERCEPTOR(int, atoi, const char *nptr) {
 
 INTERCEPTOR(long, atol, const char *nptr) {  // NOLINT
 #if SANITIZER_MAC
-  if (!asan_inited) return REAL(atol)(nptr);
+  if (UNLIKELY(!asan_inited)) return REAL(atol)(nptr);
 #endif
   ENSURE_ASAN_INITED();
   if (!flags()->replace_str) {
@@ -683,7 +687,7 @@ static void AtCxaAtexit(void *unused) {
 INTERCEPTOR(int, __cxa_atexit, void (*func)(void *), void *arg,
             void *dso_handle) {
 #if SANITIZER_MAC
-  if (!asan_inited) return REAL(__cxa_atexit)(func, arg, dso_handle);
+  if (UNLIKELY(!asan_inited)) return REAL(__cxa_atexit)(func, arg, dso_handle);
 #endif
   ENSURE_ASAN_INITED();
   int res = REAL(__cxa_atexit)(func, arg, dso_handle);
@@ -724,7 +728,7 @@ void InitializeAsanInterceptors() {
   static bool was_called_once;
   CHECK(was_called_once == false);
   was_called_once = true;
-  SANITIZER_COMMON_INTERCEPTORS_INIT;
+  InitializeCommonInterceptors();
 
   // Intercept mem* functions.
   ASAN_INTERCEPT_FUNC(memcmp);

@@ -118,6 +118,8 @@ void __msan_set_expect_umr(int expect_umr);
 SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_print_shadow(const void *x, uptr size);
 SANITIZER_INTERFACE_ATTRIBUTE
+void __msan_dump_shadow(const void *x, uptr size);
+SANITIZER_INTERFACE_ATTRIBUTE
 int  __msan_has_dynamic_component();
 
 // Returns x such that %fs:x is the first byte of __msan_retval_tls.
@@ -133,8 +135,6 @@ bool __msan_is_in_loader();
 // For testing.
 SANITIZER_INTERFACE_ATTRIBUTE
 u32 __msan_get_umr_origin();
-SANITIZER_INTERFACE_ATTRIBUTE
-const char *__msan_get_origin_descr_if_stack(u32 id);
 SANITIZER_INTERFACE_ATTRIBUTE
 void __msan_partial_poison(const void* data, void* shadow, uptr size);
 
