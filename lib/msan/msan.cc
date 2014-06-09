@@ -197,10 +197,6 @@ void PrintWarning(uptr pc, uptr bp) {
   PrintWarningWithOrigin(pc, bp, __msan_origin_tls);
 }
 
-bool OriginIsValid(u32 origin) {
-  return origin != 0 && origin != (u32)-1;
-}
-
 void PrintWarningWithOrigin(uptr pc, uptr bp, u32 origin) {
   if (msan_expect_umr) {
     // Printf("Expected UMR\n");
@@ -214,10 +210,10 @@ void PrintWarningWithOrigin(uptr pc, uptr bp, u32 origin) {
   GET_FATAL_STACK_TRACE_PC_BP(pc, bp);
 
   u32 report_origin =
-    (__msan_get_track_origins() && OriginIsValid(origin)) ? origin : 0;
+    (__msan_get_track_origins() && Origin(origin).isValid()) ? origin : 0;
   ReportUMR(&stack, report_origin);
 
-  if (__msan_get_track_origins() && !OriginIsValid(origin)) {
+  if (__msan_get_track_origins() && !Origin(origin).isValid()) {
     Printf(
         "  ORIGIN: invalid (%x). Might be a bug in MemorySanitizer origin "
         "tracking.\n    This could still be a bug in your code, too!\n",
@@ -444,7 +440,11 @@ void __msan_dump_shadow(const void *x, uptr size) {
 
   unsigned char *s = (unsigned char*)MEM_TO_SHADOW(x);
   for (uptr i = 0; i < size; i++) {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    Printf("%x%x ", s[i] & 0xf, s[i] >> 4);
+#else
     Printf("%x%x ", s[i] >> 4, s[i] & 0xf);
+#endif
   }
   Printf("\n");
 }
