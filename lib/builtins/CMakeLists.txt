@@ -8,6 +8,7 @@ set(GENERIC_SOURCES
   absvti2.c
   adddf3.c
   addsf3.c
+  addtf3.c
   addvdi3.c
   addvsi3.c
   addvti3.c
@@ -38,6 +39,7 @@ set(GENERIC_SOURCES
   divsf3.c
   divsi3.c
   divti3.c
+  divtf3.c
   divxc3.c
   enable_execute_stack.c
   eprintf.c
@@ -93,6 +95,7 @@ set(GENERIC_SOURCES
   mulsc3.c
   mulsf3.c
   multi3.c
+  multf3.c
   mulvdi3.c
   mulvsi3.c
   mulvti3.c
@@ -119,6 +122,7 @@ set(GENERIC_SOURCES
   subvdi3.c
   subvsi3.c
   subvti3.c
+  subtf3.c
   trampoline_setup.c
   truncdfsf2.c
   ucmpdi2.c
