@@ -21,6 +21,7 @@
 #include "msan_thread.h"
 #include "sanitizer_common/sanitizer_platform_limits_posix.h"
 #include "sanitizer_common/sanitizer_allocator.h"
+#include "sanitizer_common/sanitizer_allocator_interface.h"
 #include "sanitizer_common/sanitizer_allocator_internal.h"
 #include "sanitizer_common/sanitizer_atomic.h"
 #include "sanitizer_common/sanitizer_common.h"
@@ -28,6 +29,7 @@
 #include "sanitizer_common/sanitizer_stackdepot.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_linux.h"
+#include "sanitizer_common/sanitizer_tls_get_addr.h"
 
 #include <stdarg.h>
 // ACHTUNG! No other system header includes in this file.
@@ -161,8 +163,20 @@ INTERCEPTOR(void *, memalign, SIZE_T boundary, SIZE_T size) {
   return ptr;
 }
 
-INTERCEPTOR(void *, __libc_memalign, uptr align, uptr s)
-    ALIAS(WRAPPER_NAME(memalign));
+INTERCEPTOR(void *, aligned_alloc, SIZE_T boundary, SIZE_T size) {
+  GET_MALLOC_STACK_TRACE;
+  CHECK_EQ(boundary & (boundary - 1), 0);
+  void *ptr = MsanReallocate(&stack, 0, size, boundary, false);
+  return ptr;
+}
+
+INTERCEPTOR(void *, __libc_memalign, SIZE_T boundary, SIZE_T size) {
+  GET_MALLOC_STACK_TRACE;
+  CHECK_EQ(boundary & (boundary - 1), 0);
+  void *ptr = MsanReallocate(&stack, 0, size, boundary, false);
+  DTLS_on_libc_memalign(ptr, size * boundary);
+  return ptr;
+}
 
 INTERCEPTOR(void *, valloc, SIZE_T size) {
   GET_MALLOC_STACK_TRACE;
@@ -195,7 +209,7 @@ INTERCEPTOR(void, cfree, void *ptr) {
 }
 
 INTERCEPTOR(uptr, malloc_usable_size, void *ptr) {
-  return __msan_get_allocated_size(ptr);
+  return __sanitizer_get_allocated_size(ptr);
 }
 
 // This function actually returns a struct by value, but we can't unpoison a
@@ -1250,13 +1264,14 @@ void *fast_memset(void *ptr, int c, SIZE_T n) {
   // hack until we have a really fast internal_memset
   if (sizeof(uptr) == 8 &&
       (n % 8) == 0 &&
-      ((uptr)ptr % 8) == 0 &&
-      (c == 0 || c == -1)) {
-    // Printf("memset %p %zd %x\n", ptr, n, c);
-    uptr to_store = c ? -1L : 0L;
+      ((uptr)ptr % 8) == 0) {
+    uptr c8 = (unsigned)c & 0xFF;
+    c8 = (c8 << 8) | c8;
+    c8 = (c8 << 16) | c8;
+    c8 = (c8 << 32) | c8;
     uptr *p = (uptr*)ptr;
     for (SIZE_T i = 0; i < n / 8; i++)
-      p[i] = to_store;
+      p[i] = c8;
     return ptr;
   }
   return internal_memset(ptr, c, n);
@@ -1398,6 +1413,9 @@ void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack) {
   }
 
   uptr end = (d + size) & ~3UL;
+  // If both ends fall into the same 4-byte slot, we are done.
+  if (end < beg) return;
+
   // Copy right unaligned origin if that memory is poisoned.
   if (end < d + size) {
     u32 o = GetOriginIfPoisoned((uptr)src + (end - d), (d + size) - end);
@@ -1414,7 +1432,7 @@ void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack) {
     if (__msan_get_track_origins() > 1) {
       u32 *src = (u32 *)MEM_TO_ORIGIN(s);
       u32 *src_s = (u32 *)MEM_TO_SHADOW(s);
-      u32 *src_end = src + (end - beg);
+      u32 *src_end = (u32 *)MEM_TO_ORIGIN(s + (end - beg));
       u32 *dst = (u32 *)MEM_TO_ORIGIN(beg);
       u32 src_o = 0;
       u32 dst_o = 0;
@@ -1459,6 +1477,7 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(mmap64);
   INTERCEPT_FUNCTION(posix_memalign);
   INTERCEPT_FUNCTION(memalign);
+  INTERCEPT_FUNCTION(__libc_memalign);
   INTERCEPT_FUNCTION(valloc);
   INTERCEPT_FUNCTION(pvalloc);
   INTERCEPT_FUNCTION(malloc);

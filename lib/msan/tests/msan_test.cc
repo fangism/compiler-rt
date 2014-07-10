@@ -18,6 +18,7 @@
 
 #include "sanitizer_common/tests/sanitizer_test_utils.h"
 
+#include "sanitizer/allocator_interface.h"
 #include "sanitizer/msan_interface.h"
 #include "msandr_test_so.h"
 
@@ -1291,64 +1292,56 @@ TEST(MemorySanitizer, memcpy) {
   EXPECT_POISONED(y[1]);
 }
 
-// Dst is poisoned, src is clean.
-void TestUnalignedMemcpy(int left, int right, bool src_is_aligned) {
-  const int sz = 20;
+void TestUnalignedMemcpy(unsigned left, unsigned right, bool src_is_aligned,
+                         bool src_is_poisoned, bool dst_is_poisoned) {
+  fprintf(stderr, "%s(%d, %d, %d, %d, %d)\n", __func__, left, right,
+          src_is_aligned, src_is_poisoned, dst_is_poisoned);
+
+  const unsigned sz = 20;
+  U4 dst_origin, src_origin;
   char *dst = (char *)malloc(sz);
-  U4 origin = __msan_get_origin(dst);
+  if (dst_is_poisoned)
+    dst_origin = __msan_get_origin(dst);
+  else
+    memset(dst, 0, sz);
 
   char *src = (char *)malloc(sz);
-  memset(src, 0, sz);
+  if (src_is_poisoned)
+    src_origin = __msan_get_origin(src);
+  else
+    memset(src, 0, sz);
 
   memcpy(dst + left, src_is_aligned ? src + left : src, sz - left - right);
-  for (int i = 0; i < left; ++i)
-    EXPECT_POISONED_O(dst[i], origin);
-  for (int i = 0; i < right; ++i)
-    EXPECT_POISONED_O(dst[sz - i - 1], origin);
-  EXPECT_NOT_POISONED(dst[left]);
-  EXPECT_NOT_POISONED(dst[sz - right - 1]);
+
+  for (unsigned i = 0; i < (left & (~3U)); ++i)
+    if (dst_is_poisoned)
+      EXPECT_POISONED_O(dst[i], dst_origin);
+    else
+      EXPECT_NOT_POISONED(dst[i]);
+
+  for (unsigned i = 0; i < (right & (~3U)); ++i)
+    if (dst_is_poisoned)
+      EXPECT_POISONED_O(dst[sz - i - 1], dst_origin);
+    else
+      EXPECT_NOT_POISONED(dst[sz - i - 1]);
+
+  for (unsigned i = left; i < sz - right; ++i)
+    if (src_is_poisoned)
+      EXPECT_POISONED_O(dst[i], src_origin);
+    else
+      EXPECT_NOT_POISONED(dst[i]);
 
   free(dst);
   free(src);
 }
 
 TEST(MemorySanitizer, memcpy_unaligned) {
-  for (int i = 0; i < 10; ++i) {
-    for (int j = 0; j < 10; ++j) {
-      TestUnalignedMemcpy(i, j, true);
-      TestUnalignedMemcpy(i, j, false);
-    }
-  }
-}
-
-// Src is poisoned, dst is clean.
-void TestUnalignedPoisonedMemcpy(int left, int right, bool src_is_aligned) {
-  const int sz = 20;
-  char *dst = (char *)malloc(sz);
-  memset(dst, 0, sz);
-
-  char *src = (char *)malloc(sz);
-  U4 origin = __msan_get_origin(src);
-
-  memcpy(dst + left, src_is_aligned ? src + left : src, sz - left - right);
-  for (int i = 0; i < left; ++i)
-    EXPECT_NOT_POISONED(dst[i]);
-  for (int i = 0; i < right; ++i)
-    EXPECT_NOT_POISONED(dst[sz - i - 1]);
-  EXPECT_POISONED_O(dst[left], origin);
-  EXPECT_POISONED_O(dst[sz - right - 1], origin);
-
-  free(dst);
-  free(src);
-}
-
-TEST(MemorySanitizer, memcpy_unaligned_poisoned) {
-  for (int i = 0; i < 10; ++i) {
-    for (int j = 0; j < 10; ++j) {
-      TestUnalignedPoisonedMemcpy(i, j, true);
-      TestUnalignedPoisonedMemcpy(i, j, false);
-    }
-  }
+  for (int i = 0; i < 10; ++i)
+    for (int j = 0; j < 10; ++j)
+      for (int aligned = 0; aligned < 2; ++aligned)
+        for (int srcp = 0; srcp < 2; ++srcp)
+          for (int dstp = 0; dstp < 2; ++dstp)
+            TestUnalignedMemcpy(i, j, aligned, srcp, dstp);
 }
 
 TEST(MemorySanitizer, memmove) {
@@ -3022,12 +3015,12 @@ TEST(MemorySanitizer, valloc) {
 TEST(MemorySanitizer, pvalloc) {
   void *p = pvalloc(kPageSize + 100);
   EXPECT_EQ(0U, (uintptr_t)p % kPageSize);
-  EXPECT_EQ(2 * kPageSize, __msan_get_allocated_size(p));
+  EXPECT_EQ(2 * kPageSize, __sanitizer_get_allocated_size(p));
   free(p);
 
   p = pvalloc(0);  // pvalloc(0) should allocate at least one page.
   EXPECT_EQ(0U, (uintptr_t)p % kPageSize);
-  EXPECT_EQ(kPageSize, __msan_get_allocated_size(p));
+  EXPECT_EQ(kPageSize, __sanitizer_get_allocated_size(p));
   free(p);
 }
 
@@ -3556,6 +3549,7 @@ TEST(MemorySanitizer, UnalignedStore64_precise2) {
   EXPECT_POISONED_O(x[11], originx3);
 }
 
+#if defined(__clang__)
 namespace {
 typedef U1 V16x8 __attribute__((__vector_size__(16)));
 typedef U2 V8x16 __attribute__((__vector_size__(16)));
@@ -3716,6 +3710,7 @@ TEST(VectorMaddTest, mmx_pmadd_wd) {
 
   EXPECT_EQ((unsigned)(2 * 102 + 3 * 103), c[1]);
 }
+#endif  // defined(__clang__)
 
 TEST(MemorySanitizerDr, StoreInDSOTest) {
   if (!__msan_has_dynamic_component()) return;
@@ -4074,7 +4069,7 @@ TEST(MemorySanitizerStress, DISABLED_MallocStackTrace) {
 TEST(MemorySanitizerAllocator, get_estimated_allocated_size) {
   size_t sizes[] = {0, 20, 5000, 1<<20};
   for (size_t i = 0; i < sizeof(sizes) / sizeof(*sizes); ++i) {
-    size_t alloc_size = __msan_get_estimated_allocated_size(sizes[i]);
+    size_t alloc_size = __sanitizer_get_estimated_allocated_size(sizes[i]);
     EXPECT_EQ(alloc_size, sizes[i]);
   }
 }
@@ -4083,26 +4078,26 @@ TEST(MemorySanitizerAllocator, get_allocated_size_and_ownership) {
   char *array = reinterpret_cast<char*>(malloc(100));
   int *int_ptr = new int;
 
-  EXPECT_TRUE(__msan_get_ownership(array));
-  EXPECT_EQ(100U, __msan_get_allocated_size(array));
+  EXPECT_TRUE(__sanitizer_get_ownership(array));
+  EXPECT_EQ(100U, __sanitizer_get_allocated_size(array));
 
-  EXPECT_TRUE(__msan_get_ownership(int_ptr));
-  EXPECT_EQ(sizeof(*int_ptr), __msan_get_allocated_size(int_ptr));
+  EXPECT_TRUE(__sanitizer_get_ownership(int_ptr));
+  EXPECT_EQ(sizeof(*int_ptr), __sanitizer_get_allocated_size(int_ptr));
 
   void *wild_addr = reinterpret_cast<void*>(0x1);
-  EXPECT_FALSE(__msan_get_ownership(wild_addr));
-  EXPECT_EQ(0U, __msan_get_allocated_size(wild_addr));
+  EXPECT_FALSE(__sanitizer_get_ownership(wild_addr));
+  EXPECT_EQ(0U, __sanitizer_get_allocated_size(wild_addr));
 
-  EXPECT_FALSE(__msan_get_ownership(array + 50));
-  EXPECT_EQ(0U, __msan_get_allocated_size(array + 50));
+  EXPECT_FALSE(__sanitizer_get_ownership(array + 50));
+  EXPECT_EQ(0U, __sanitizer_get_allocated_size(array + 50));
 
-  // NULL is a valid argument for GetAllocatedSize but is not owned.                                                  
-  EXPECT_FALSE(__msan_get_ownership(NULL));
-  EXPECT_EQ(0U, __msan_get_allocated_size(NULL));
- 
+  // NULL is a valid argument for GetAllocatedSize but is not owned.
+  EXPECT_FALSE(__sanitizer_get_ownership(NULL));
+  EXPECT_EQ(0U, __sanitizer_get_allocated_size(NULL));
+
   free(array);
-  EXPECT_FALSE(__msan_get_ownership(array));
-  EXPECT_EQ(0U, __msan_get_allocated_size(array));
+  EXPECT_FALSE(__sanitizer_get_ownership(array));
+  EXPECT_EQ(0U, __sanitizer_get_allocated_size(array));
 
   delete int_ptr;
 }

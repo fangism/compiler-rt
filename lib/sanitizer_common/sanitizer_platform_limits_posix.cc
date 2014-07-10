@@ -193,9 +193,10 @@ namespace __sanitizer {
   unsigned struct_tms_sz = sizeof(struct tms);
   unsigned struct_sigevent_sz = sizeof(struct sigevent);
   unsigned struct_sched_param_sz = sizeof(struct sched_param);
-  unsigned struct_statfs_sz = sizeof(struct statfs);
+
 
 #if !SANITIZER_ANDROID
+  unsigned struct_statfs_sz = sizeof(struct statfs);
   unsigned struct_sockaddr_sz = sizeof(struct sockaddr);
   unsigned ucontext_t_sz = sizeof(ucontext_t);
 #if HAVE_STRUCT_STATFS64

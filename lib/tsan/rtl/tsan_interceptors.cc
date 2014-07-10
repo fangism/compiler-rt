@@ -520,7 +520,7 @@ TSAN_INTERCEPTOR(void, cfree, void *p) {
 
 TSAN_INTERCEPTOR(uptr, malloc_usable_size, void *p) {
   SCOPED_INTERCEPTOR_RAW(malloc_usable_size, p);
-  return user_alloc_usable_size(thr, pc, p);
+  return user_alloc_usable_size(p);
 }
 
 #define OPERATOR_NEW_BODY(mangled_name) \
@@ -734,6 +734,11 @@ TSAN_INTERCEPTOR(int, munmap, void *addr, long_t sz) {
 }
 
 TSAN_INTERCEPTOR(void*, memalign, uptr align, uptr sz) {
+  SCOPED_INTERCEPTOR_RAW(memalign, align, sz);
+  return user_alloc(thr, pc, sz, align);
+}
+
+TSAN_INTERCEPTOR(void*, aligned_alloc, uptr align, uptr sz) {
   SCOPED_INTERCEPTOR_RAW(memalign, align, sz);
   return user_alloc(thr, pc, sz, align);
 }
@@ -1140,7 +1145,7 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_tryrdlock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_rwlock_tryrdlock, m);
   int res = REAL(pthread_rwlock_tryrdlock)(m);
   if (res == 0) {
-    MutexLock(thr, pc, (uptr)m, /*rec=*/1, /*try_lock=*/true);
+    MutexReadLock(thr, pc, (uptr)m, /*try_lock=*/true);
   }
   return res;
 }

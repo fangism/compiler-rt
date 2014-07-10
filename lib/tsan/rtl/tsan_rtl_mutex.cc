@@ -172,7 +172,7 @@ void MutexLock(ThreadState *thr, uptr pc, uptr addr, int rec, bool try_lock) {
   }
   s->recursion += rec;
   thr->mset.Add(s->GetId(), true, thr->fast_state.epoch());
-  if (flags()->detect_deadlocks && s->recursion == 1) {
+  if (flags()->detect_deadlocks && (s->recursion - rec) == 0) {
     Callback cb(thr, pc);
     if (!try_lock)
       ctx->dd->MutexBeforeLock(&cb, &s->dd, true);
@@ -215,7 +215,7 @@ int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, bool all) {
     }
   }
   thr->mset.Del(s->GetId(), true);
-  if (flags()->detect_deadlocks && s->recursion == 0) {
+  if (flags()->detect_deadlocks && s->recursion == 0 && !report_bad_unlock) {
     Callback cb(thr, pc);
     ctx->dd->MutexBeforeUnlock(&cb, &s->dd, true);
   }
@@ -224,7 +224,7 @@ int MutexUnlock(ThreadState *thr, uptr pc, uptr addr, bool all) {
   // Can't touch s after this point.
   if (report_bad_unlock)
     ReportMutexMisuse(thr, pc, ReportTypeMutexBadUnlock, addr, mid);
-  if (flags()->detect_deadlocks) {
+  if (flags()->detect_deadlocks && !report_bad_unlock) {
     Callback cb(thr, pc);
     ReportDeadlock(thr, pc, ctx->dd->GetReport(&cb));
   }

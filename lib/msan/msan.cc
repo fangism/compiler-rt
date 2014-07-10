@@ -145,6 +145,8 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->wrap_signals, "wrap_signals", "");
   ParseFlag(str, &f->print_stats, "print_stats", "");
   ParseFlag(str, &f->atexit, "atexit", "");
+  ParseFlag(str, &f->store_context_size, "store_context_size", "");
+  if (f->store_context_size < 1) f->store_context_size = 1;
 
   // keep_going is an old name for halt_on_error,
   // and it has inverse meaning.
@@ -162,6 +164,7 @@ static void InitializeFlags(Flags *f, const char *options) {
   cf->handle_ioctl = true;
   // FIXME: test and enable.
   cf->check_printf = false;
+  cf->intercept_tls_get_addr = true;
 
   internal_memset(f, 0, sizeof(*f));
   f->poison_heap_with_zeroes = false;
@@ -176,6 +179,7 @@ static void InitializeFlags(Flags *f, const char *options) {
   f->print_stats = false;
   f->atexit = false;
   f->halt_on_error = !&__msan_keep_going;
+  f->store_context_size = 20;
 
   // Override from user-specified string.
   if (__msan_default_options)
@@ -316,7 +320,15 @@ MSAN_MAYBE_WARNING(u64, 8)
 
 #define MSAN_MAYBE_STORE_ORIGIN(type, size)                       \
   void __msan_maybe_store_origin_##size(type s, void *p, u32 o) { \
-    if (UNLIKELY(s)) *(u32 *)MEM_TO_ORIGIN((uptr)p &~3UL) = o;    \
+    if (UNLIKELY(s)) {                                            \
+      if (__msan_get_track_origins() > 1) {                       \
+        GET_CALLER_PC_BP_SP;                                      \
+        (void) sp;                                                \
+        GET_STORE_STACK_TRACE_PC_BP(pc, bp);                      \
+        o = ChainOrigin(o, &stack);                               \
+      }                                                           \
+      *(u32 *)MEM_TO_ORIGIN((uptr)p & ~3UL) = o;                  \
+    }                                                             \
   }
 
 MSAN_MAYBE_STORE_ORIGIN(u8, 1)
@@ -573,7 +585,7 @@ void __msan_set_alloca_origin4(void *a, uptr size, const char *descr, uptr pc) {
   }
   if (print)
     Printf("__msan_set_alloca_origin: descr=%s id=%x\n", descr + 4, id);
-  __msan_set_origin(a, size, id);
+  __msan_set_origin(a, size, Origin(id, 1).raw_id());
 }
 
 u32 __msan_chain_origin(u32 id) {
