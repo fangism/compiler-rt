@@ -21,14 +21,6 @@
 	.thumb
 #endif
 
-#if __ARM_ARCH_ISA_THUMB == 2
-#define IT(cond)  it cond
-#define ITT(cond) itt cond
-#else
-#define IT(cond)
-#define ITT(cond)
-#endif
-
 	.p2align 2
 DEFINE_COMPILERRT_FUNCTION(__udivmodsi4)
 #if __ARM_ARCH_EXT_IDIV__
@@ -117,11 +109,11 @@ DEFINE_COMPILERRT_FUNCTION(__udivmodsi4)
 
 #define	IMM	#
 
-#define block(shift) \
-	cmp	r0, r1, lsl IMM shift; \
-	ITT(hs); \
-	addhs.w	r3, r3, IMM (1 << shift); \
-	subhs.w	r0, r0, r1, lsl IMM shift
+#define block(shift)                                                           \
+	cmp	r0, r1, lsl IMM shift;                                         \
+	ITT(hs);                                                               \
+	WIDE(addhs)	r3, r3, IMM (1 << shift);                              \
+	WIDE(subhs)	r0, r0, r1, lsl IMM shift
 
 	block(31)
 	block(30)

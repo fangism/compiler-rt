@@ -91,6 +91,20 @@
 #define JMP(r) mov pc, r
 #define JMPc(r, c) mov##c pc, r
 #endif
+
+#if __ARM_ARCH_ISA_THUMB == 2
+#define IT(cond)  it cond
+#define ITT(cond) itt cond
+#else
+#define IT(cond)
+#define ITT(cond)
+#endif
+
+#if __ARM_ARCH_ISA_THUMB == 2
+#define WIDE(op) op.w
+#else
+#define WIDE(op) op
+#endif
 #endif
 
 #define GLUE2(a, b) a##b
