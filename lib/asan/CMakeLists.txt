@@ -53,14 +53,18 @@ endif()
 
 set(ASAN_DYNAMIC_DEFINITIONS
   ${ASAN_COMMON_DEFINITIONS} ASAN_DYNAMIC=1)
+append_if(WIN32 INTERCEPTION_DYNAMIC_CRT ASAN_DYNAMIC_DEFINITIONS)
 
 set(ASAN_DYNAMIC_CFLAGS ${ASAN_CFLAGS})
 append_if(COMPILER_RT_HAS_FTLS_MODEL_INITIAL_EXEC
   -ftls-model=initial-exec ASAN_DYNAMIC_CFLAGS)
+append_if(MSVC /DEBUG ASAN_DYNAMIC_CFLAGS)
 
-set(ASAN_DYNAMIC_LIBS stdc++ m c)
-append_if(COMPILER_RT_HAS_LIBPTHREAD pthread ASAN_DYNAMIC_LIBS)
+append_if(COMPILER_RT_HAS_LIBC c ASAN_DYNAMIC_LIBS)
 append_if(COMPILER_RT_HAS_LIBDL dl ASAN_DYNAMIC_LIBS)
+append_if(COMPILER_RT_HAS_LIBM m ASAN_DYNAMIC_LIBS)
+append_if(COMPILER_RT_HAS_LIBPTHREAD pthread ASAN_DYNAMIC_LIBS)
+append_if(COMPILER_RT_HAS_LIBSTDCXX stdc++ ASAN_DYNAMIC_LIBS)
 
 # Compile ASan sources into an object library.
 if(APPLE)
@@ -166,7 +170,7 @@ else()
       add_dependencies(asan clang_rt.asan-preinit-${arch})
 
       add_compiler_rt_runtime(clang_rt.asan-dynamic-${arch} ${arch} SHARED
-        OUTPUT_NAME clang_rt.asan-${arch}
+        OUTPUT_NAME clang_rt.asan_dynamic-${arch}
         SOURCES $<TARGET_OBJECTS:RTAsan_dynamic.${arch}>
                 ${ASAN_COMMON_RUNTIME_OBJECTS}
         CFLAGS ${ASAN_DYNAMIC_CFLAGS}
