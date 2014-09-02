@@ -206,7 +206,12 @@ option(COMPILER_RT_DEBUG "Build runtimes with full debug info" OFF)
 # COMPILER_RT_DEBUG_PYBOOL is used by lit.common.configured.in.
 pythonize_bool(COMPILER_RT_DEBUG)
 
+# We have to support both static and dynamic/shared runtime on Windows.
+if(WIN32)
+option(COMPILER_RT_BUILD_SHARED_ASAN "Build shared version of AddressSanitizer runtime" ON)
+else()
 option(COMPILER_RT_BUILD_SHARED_ASAN "Build shared version of AddressSanitizer runtime" OFF)
+endif()
 
 #================================
 # Setup Compiler Flags
@@ -276,6 +281,7 @@ append_if(COMPILER_RT_HAS_WNO_GNU_FLAG -Wno-gnu SANITIZER_COMMON_CFLAGS)
 append_if(COMPILER_RT_HAS_WNO_VARIADIC_MACROS_FLAG -Wno-variadic-macros SANITIZER_COMMON_CFLAGS)
 append_if(COMPILER_RT_HAS_WNO_C99_EXTENSIONS_FLAG -Wno-c99-extensions SANITIZER_COMMON_CFLAGS)
 append_if(COMPILER_RT_HAS_WNO_NON_VIRTUAL_DTOR_FLAG -Wno-non-virtual-dtor SANITIZER_COMMON_CFLAGS)
+append_if(COMPILER_RT_HAS_WD4391_FLAG /wd4391 SANITIZER_COMMON_CFLAGS)
 append_if(COMPILER_RT_HAS_WD4722_FLAG /wd4722 SANITIZER_COMMON_CFLAGS)
 
 if(APPLE)

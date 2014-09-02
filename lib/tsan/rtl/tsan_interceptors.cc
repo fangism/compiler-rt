@@ -93,6 +93,11 @@ typedef void (*sighandler_t)(int sig);
 
 #define errno (*__errno_location())
 
+// 16K loaded modules should be enough for everyone.
+static const uptr kMaxModules = 1 << 14;
+static LoadedModule *modules;
+static uptr nmodules;
+
 struct sigaction_t {
   union {
     sighandler_t sa_handler;
@@ -124,9 +129,9 @@ struct SignalDesc {
 };
 
 struct SignalContext {
-  int in_blocking_func;
   int int_signal_send;
-  int pending_signal_count;
+  bool in_blocking_func;
+  bool have_pending_signals;
   SignalDesc pending_signals[kSigCount];
 };
 
@@ -222,11 +227,11 @@ ScopedInterceptor::~ScopedInterceptor() {
 struct BlockingCall {
   explicit BlockingCall(ThreadState *thr)
       : ctx(SigCtx(thr)) {
-    ctx->in_blocking_func++;
+    ctx->in_blocking_func = true;
   }
 
   ~BlockingCall() {
-    ctx->in_blocking_func--;
+    ctx->in_blocking_func = false;
   }
 
   SignalContext *ctx;
@@ -267,52 +272,56 @@ class AtExitContext {
     , pos_() {
   }
 
-  typedef void(*atexit_t)();
+  typedef void(*atexit_cb_t)();
 
   int atexit(ThreadState *thr, uptr pc, bool is_on_exit,
-             atexit_t f, void *arg) {
+             atexit_cb_t f, void *arg, void *dso) {
     Lock l(&mtx_);
     if (pos_ == kMaxAtExit)
       return 1;
     Release(thr, pc, (uptr)this);
-    stack_[pos_] = f;
-    args_[pos_] = arg;
-    is_on_exits_[pos_] = is_on_exit;
+    atexit_t *a = &stack_[pos_];
+    a->cb = f;
+    a->arg = arg;
+    a->dso = dso;
+    a->is_on_exit = is_on_exit;
     pos_++;
     return 0;
   }
 
   void exit(ThreadState *thr, uptr pc) {
     for (;;) {
-      atexit_t f = 0;
-      void *arg = 0;
-      bool is_on_exit = false;
+      atexit_t a = {};
       {
         Lock l(&mtx_);
         if (pos_) {
           pos_--;
-          f = stack_[pos_];
-          arg = args_[pos_];
-          is_on_exit = is_on_exits_[pos_];
+          a = stack_[pos_];
           Acquire(thr, pc, (uptr)this);
         }
       }
-      if (f == 0)
+      if (a.cb == 0)
         break;
-      DPrintf("#%d: executing atexit func %p\n", thr->tid, f);
-      if (is_on_exit)
-        ((void(*)(int status, void *arg))f)(0, arg);
+      VPrintf(2, "#%d: executing atexit func %p(%p) dso=%p\n",
+          thr->tid, a.cb, a.arg, a.dso);
+      if (a.is_on_exit)
+        ((void(*)(int status, void *arg))a.cb)(0, a.arg);
       else
-        ((void(*)(void *arg, void *dso))f)(arg, 0);
+        ((void(*)(void *arg, void *dso))a.cb)(a.arg, a.dso);
     }
   }
 
  private:
-  static const int kMaxAtExit = 128;
+  struct atexit_t {
+    atexit_cb_t cb;
+    void *arg;
+    void *dso;
+    bool is_on_exit;
+  };
+
+  static const int kMaxAtExit = 1024;
   Mutex mtx_;
   atexit_t stack_[kMaxAtExit];
-  void *args_[kMaxAtExit];
-  bool is_on_exits_[kMaxAtExit];
   int pos_;
 };
 
@@ -324,29 +333,42 @@ TSAN_INTERCEPTOR(int, atexit, void (*f)()) {
   // We want to setup the atexit callback even if we are in ignored lib
   // or after fork.
   SCOPED_INTERCEPTOR_RAW(atexit, f);
-  return atexit_ctx->atexit(thr, pc, false, (void(*)())f, 0);
+  return atexit_ctx->atexit(thr, pc, false, (void(*)())f, 0, 0);
 }
 
 TSAN_INTERCEPTOR(int, on_exit, void(*f)(int, void*), void *arg) {
   if (cur_thread()->in_symbolizer)
     return 0;
   SCOPED_TSAN_INTERCEPTOR(on_exit, f, arg);
-  return atexit_ctx->atexit(thr, pc, true, (void(*)())f, arg);
+  return atexit_ctx->atexit(thr, pc, true, (void(*)())f, arg, 0);
+}
+
+bool IsSaticModule(void *dso) {
+  if (modules == 0)
+    return false;
+  for (uptr i = 0; i < nmodules; i++) {
+    if (modules[i].containsAddress((uptr)dso))
+      return true;
+  }
+  return false;
 }
 
 TSAN_INTERCEPTOR(int, __cxa_atexit, void (*f)(void *a), void *arg, void *dso) {
   if (cur_thread()->in_symbolizer)
     return 0;
   SCOPED_TSAN_INTERCEPTOR(__cxa_atexit, f, arg, dso);
-  if (dso) {
-    // Memory allocation in __cxa_atexit will race with free during exit,
-    // because we do not see synchronization around atexit callback list.
-    ThreadIgnoreBegin(thr, pc);
-    int res = REAL(__cxa_atexit)(f, arg, dso);
-    ThreadIgnoreEnd(thr, pc);
-    return res;
-  }
-  return atexit_ctx->atexit(thr, pc, false, (void(*)())f, arg);
+  // If it's the main executable or a statically loaded library,
+  // we will call the callback.
+  if (dso == 0 || IsSaticModule(dso))
+    return atexit_ctx->atexit(thr, pc, false, (void(*)())f, arg, dso);
+
+  // Dynamically load module, don't know when to call the callback for it.
+  // Memory allocation in __cxa_atexit will race with free during exit,
+  // because we do not see synchronization around atexit callback list.
+  ThreadIgnoreBegin(thr, pc);
+  int res = REAL(__cxa_atexit)(f, arg, dso);
+  ThreadIgnoreEnd(thr, pc);
+  return res;
 }
 
 // Cleanup old bufs.
@@ -1683,8 +1705,10 @@ TSAN_INTERCEPTOR(int, epoll_wait, int epfd, void *ev, int cnt, int timeout) {
 
 namespace __tsan {
 
-static void CallUserSignalHandler(ThreadState *thr, bool sync, bool sigact,
-    int sig, my_siginfo_t *info, void *uctx) {
+static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
+    bool sigact, int sig, my_siginfo_t *info, void *uctx) {
+  if (acquire)
+    Acquire(thr, 0, (uptr)&sigactions[sig]);
   // Ensure that the handler does not spoil errno.
   const int saved_errno = errno;
   errno = 99;
@@ -1719,10 +1743,10 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool sigact,
 
 void ProcessPendingSignals(ThreadState *thr) {
   SignalContext *sctx = SigCtx(thr);
-  if (sctx == 0 || sctx->pending_signal_count == 0 || thr->in_signal_handler)
+  if (sctx == 0 || !sctx->have_pending_signals)
     return;
-  thr->in_signal_handler = true;
-  sctx->pending_signal_count = 0;
+  sctx->have_pending_signals = false;
+  atomic_fetch_add(&thr->in_signal_handler, 1, memory_order_relaxed);
   // These are too big for stack.
   static THREADLOCAL __sanitizer_sigset_t emptyset, oldset;
   REAL(sigfillset)(&emptyset);
@@ -1733,14 +1757,13 @@ void ProcessPendingSignals(ThreadState *thr) {
       signal->armed = false;
       if (sigactions[sig].sa_handler != SIG_DFL
           && sigactions[sig].sa_handler != SIG_IGN) {
-        CallUserSignalHandler(thr, false, signal->sigaction,
+        CallUserSignalHandler(thr, false, true, signal->sigaction,
             sig, &signal->siginfo, &signal->ctx);
       }
     }
   }
   pthread_sigmask(SIG_SETMASK, &oldset, 0);
-  CHECK_EQ(thr->in_signal_handler, true);
-  thr->in_signal_handler = false;
+  atomic_fetch_add(&thr->in_signal_handler, -1, memory_order_relaxed);
 }
 
 }  // namespace __tsan
@@ -1766,21 +1789,27 @@ void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
       // If we are in blocking function, we can safely process it now
       // (but check if we are in a recursive interceptor,
       // i.e. pthread_join()->munmap()).
-      (sctx && sctx->in_blocking_func == 1)) {
-    CHECK_EQ(thr->in_signal_handler, false);
-    thr->in_signal_handler = true;
-    if (sctx && sctx->in_blocking_func == 1) {
+      (sctx && sctx->in_blocking_func)) {
+    atomic_fetch_add(&thr->in_signal_handler, 1, memory_order_relaxed);
+    if (sctx && sctx->in_blocking_func) {
       // We ignore interceptors in blocking functions,
       // temporary enbled them again while we are calling user function.
       int const i = thr->ignore_interceptors;
       thr->ignore_interceptors = 0;
-      CallUserSignalHandler(thr, sync, sigact, sig, info, ctx);
+      sctx->in_blocking_func = false;
+      CallUserSignalHandler(thr, sync, true, sigact, sig, info, ctx);
       thr->ignore_interceptors = i;
+      sctx->in_blocking_func = true;
     } else {
-      CallUserSignalHandler(thr, sync, sigact, sig, info, ctx);
+      // Be very conservative with when we do acquire in this case.
+      // It's unsafe to do acquire in async handlers, because ThreadState
+      // can be in inconsistent state.
+      // SIGSYS looks relatively safe -- it's synchronous and can actually
+      // need some global state.
+      bool acq = (sig == SIGSYS);
+      CallUserSignalHandler(thr, sync, acq, sigact, sig, info, ctx);
     }
-    CHECK_EQ(thr->in_signal_handler, true);
-    thr->in_signal_handler = false;
+    atomic_fetch_add(&thr->in_signal_handler, -1, memory_order_relaxed);
     return;
   }
 
@@ -1794,7 +1823,7 @@ void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
       internal_memcpy(&signal->siginfo, info, sizeof(*info));
     if (ctx)
       internal_memcpy(&signal->ctx, ctx, sizeof(signal->ctx));
-    sctx->pending_signal_count++;
+    sctx->have_pending_signals = true;
   }
 }
 
@@ -1822,6 +1851,7 @@ TSAN_INTERCEPTOR(int, sigaction, int sig, sigaction_t *act, sigaction_t *old) {
     else
       newact.sa_handler = rtl_sighandler;
   }
+  ReleaseStore(thr, pc, (uptr)&sigactions[sig]);
   int res = REAL(sigaction)(sig, &newact, 0);
   return res;
 }
@@ -1905,35 +1935,6 @@ TSAN_INTERCEPTOR(int, getaddrinfo, void *node, void *service,
   return res;
 }
 
-// Linux kernel has a bug that leads to kernel deadlock if a process
-// maps TBs of memory and then calls mlock().
-static void MlockIsUnsupported() {
-  static atomic_uint8_t printed;
-  if (atomic_exchange(&printed, 1, memory_order_relaxed))
-    return;
-  VPrintf(1, "INFO: ThreadSanitizer ignores mlock/munlock[all]\n");
-}
-
-TSAN_INTERCEPTOR(int, mlock, const void *addr, uptr len) {
-  MlockIsUnsupported();
-  return 0;
-}
-
-TSAN_INTERCEPTOR(int, munlock, const void *addr, uptr len) {
-  MlockIsUnsupported();
-  return 0;
-}
-
-TSAN_INTERCEPTOR(int, mlockall, int flags) {
-  MlockIsUnsupported();
-  return 0;
-}
-
-TSAN_INTERCEPTOR(int, munlockall, void) {
-  MlockIsUnsupported();
-  return 0;
-}
-
 TSAN_INTERCEPTOR(int, fork, int fake) {
   if (cur_thread()->in_symbolizer)
     return REAL(fork)(fake);
@@ -1994,6 +1995,18 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 #include "sanitizer_common/sanitizer_platform_interceptors.h"
 // Causes interceptor recursion (getaddrinfo() and fopen())
 #undef SANITIZER_INTERCEPT_GETADDRINFO
+// There interceptors do not seem to be strictly necessary for tsan.
+// But we see cases where the interceptors consume 70% of execution time.
+// Memory blocks passed to fgetgrent_r are "written to" by tsan several times.
+// First, there is some recursion (getgrnam_r calls fgetgrent_r), and each
+// function "writes to" the buffer. Then, the same memory is "written to"
+// twice, first as buf and then as pwbufp (both of them refer to the same
+// addresses).
+#undef SANITIZER_INTERCEPT_GETPWENT
+#undef SANITIZER_INTERCEPT_GETPWENT_R
+#undef SANITIZER_INTERCEPT_FGETPWENT
+#undef SANITIZER_INTERCEPT_GETPWNAM_AND_FRIENDS
+#undef SANITIZER_INTERCEPT_GETPWNAM_R_AND_FRIENDS
 
 #define COMMON_INTERCEPT_FUNCTION(name) INTERCEPT_FUNCTION(name)
 
@@ -2373,11 +2386,6 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(gettimeofday);
   TSAN_INTERCEPT(getaddrinfo);
 
-  TSAN_INTERCEPT(mlock);
-  TSAN_INTERCEPT(munlock);
-  TSAN_INTERCEPT(mlockall);
-  TSAN_INTERCEPT(munlockall);
-
   TSAN_INTERCEPT(fork);
   TSAN_INTERCEPT(vfork);
   TSAN_INTERCEPT(on_exit);
@@ -2401,6 +2409,11 @@ void InitializeInterceptors() {
   }
 
   FdInit();
+
+  // Remember list of loaded libraries for atexit interceptors.
+  modules = (LoadedModule*)MmapOrDie(sizeof(*modules)*kMaxModules,
+      "LoadedModule");
+  nmodules = GetListOfModules(modules, kMaxModules, 0);
 }
 
 void *internal_start_thread(void(*func)(void *arg), void *arg) {

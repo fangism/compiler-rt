@@ -1037,7 +1037,8 @@ INTERCEPTOR(int, ioctl, int d, unsigned request, void *arg) {
 #endif
 
 #if SANITIZER_INTERCEPT_GETPWNAM_AND_FRIENDS || \
-    SANITIZER_INTERCEPT_GETPWENT || SANITIZER_INTERCEPT_FGETPWENT
+    SANITIZER_INTERCEPT_GETPWENT || SANITIZER_INTERCEPT_FGETPWENT || \
+    SANITIZER_INTERCEPT_GETPWENT_R || SANITIZER_INTERCEPT_GETPWNAM_R_AND_FRIENDS
 static void unpoison_passwd(void *ctx, __sanitizer_passwd *pwd) {
   if (pwd) {
     COMMON_INTERCEPTOR_WRITE_RANGE(ctx, pwd, sizeof(*pwd));
@@ -1084,7 +1085,9 @@ static void unpoison_group(void *ctx, __sanitizer_group *grp) {
   }
 }
 #endif  // SANITIZER_INTERCEPT_GETPWNAM_AND_FRIENDS ||
-        // SANITIZER_INTERCEPT_GETPWENT || SANITIZER_INTERCEPT_FGETPWENT
+        // SANITIZER_INTERCEPT_GETPWENT || SANITIZER_INTERCEPT_FGETPWENT ||
+        // SANITIZER_INTERCEPT_GETPWENT_R ||
+        // SANITIZER_INTERCEPT_GETPWNAM_R_AND_FRIENDS
 
 #if SANITIZER_INTERCEPT_GETPWNAM_AND_FRIENDS
 INTERCEPTOR(__sanitizer_passwd *, getpwnam, const char *name) {
@@ -4692,6 +4695,47 @@ INTERCEPTOR(int, timerfd_gettime, int fd, void *curr_value) {
 #define INIT_TIMERFD
 #endif
 
+#if SANITIZER_INTERCEPT_MLOCKX
+// Linux kernel has a bug that leads to kernel deadlock if a process
+// maps TBs of memory and then calls mlock().
+static void MlockIsUnsupported() {
+  static atomic_uint8_t printed;
+  if (atomic_exchange(&printed, 1, memory_order_relaxed))
+    return;
+  VPrintf(1, "INFO: %s ignores mlock/mlockall/munlock/munlockall\n",
+          SanitizerToolName);
+}
+
+INTERCEPTOR(int, mlock, const void *addr, uptr len) {
+  MlockIsUnsupported();
+  return 0;
+}
+
+INTERCEPTOR(int, munlock, const void *addr, uptr len) {
+  MlockIsUnsupported();
+  return 0;
+}
+
+INTERCEPTOR(int, mlockall, int flags) {
+  MlockIsUnsupported();
+  return 0;
+}
+
+INTERCEPTOR(int, munlockall, void) {
+  MlockIsUnsupported();
+  return 0;
+}
+
+#define INIT_MLOCKX                                                            \
+  COMMON_INTERCEPT_FUNCTION(mlock);                                            \
+  COMMON_INTERCEPT_FUNCTION(munlock);                                          \
+  COMMON_INTERCEPT_FUNCTION(mlockall);                                         \
+  COMMON_INTERCEPT_FUNCTION(munlockall);
+
+#else
+#define INIT_MLOCKX
+#endif  // SANITIZER_INTERCEPT_MLOCKX
+
 static void InitializeCommonInterceptors() {
   static u64 metadata_mem[sizeof(MetadataHashMap) / sizeof(u64) + 1];
   interceptor_metadata_map = new((void *)&metadata_mem) MetadataHashMap();
@@ -4852,4 +4896,5 @@ static void InitializeCommonInterceptors() {
   INIT_DLOPEN_DLCLOSE;
   INIT_GETPASS;
   INIT_TIMERFD;
+  INIT_MLOCKX;
 }

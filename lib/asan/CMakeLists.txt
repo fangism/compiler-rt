@@ -169,8 +169,14 @@ else()
         DEFS ${ASAN_COMMON_DEFINITIONS})
       add_dependencies(asan clang_rt.asan-preinit-${arch})
 
+      if (WIN32)
+         set(SHARED_ASAN_NAME clang_rt.asan_dynamic-${arch})
+      else()
+         set(SHARED_ASAN_NAME clang_rt.asan-${arch})
+      endif()
+
       add_compiler_rt_runtime(clang_rt.asan-dynamic-${arch} ${arch} SHARED
-        OUTPUT_NAME clang_rt.asan_dynamic-${arch}
+        OUTPUT_NAME ${SHARED_ASAN_NAME}
         SOURCES $<TARGET_OBJECTS:RTAsan_dynamic.${arch}>
                 ${ASAN_COMMON_RUNTIME_OBJECTS}
         CFLAGS ${ASAN_DYNAMIC_CFLAGS}
@@ -188,11 +194,16 @@ else()
 
     if (WIN32)
       add_compiler_rt_runtime(clang_rt.asan_dll_thunk-${arch} ${arch} STATIC
-        SOURCES asan_dll_thunk.cc
+        SOURCES asan_win_dll_thunk.cc
                 $<TARGET_OBJECTS:RTInterception.${arch}>
         CFLAGS ${ASAN_CFLAGS} -DASAN_DLL_THUNK
         DEFS ${ASAN_COMMON_DEFINITIONS})
       add_dependencies(asan clang_rt.asan_dll_thunk-${arch})
+      add_compiler_rt_runtime(clang_rt.asan_uar_thunk-${arch} ${arch} STATIC
+        SOURCES asan_win_uar_thunk.cc
+        CFLAGS ${ASAN_CFLAGS} -DASAN_UAR_THUNK -Zl
+        DEFS ${ASAN_COMMON_DEFINITIONS})
+      add_dependencies(asan clang_rt.asan_uar_thunk-${arch})
     endif()
   endforeach()
 endif()
