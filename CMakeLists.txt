@@ -374,7 +374,8 @@ endif()
 # support only subset of these (e.g. TSan works on x86_64 only).
 filter_available_targets(SANITIZER_COMMON_SUPPORTED_ARCH
   x86_64 i386 ppc64 ppc arm aarch64 mips)
-filter_available_targets(ASAN_SUPPORTED_ARCH x86_64 i386 ppc64 ppc arm mips)
+filter_available_targets(ASAN_SUPPORTED_ARCH x86_64 i386 arm mips)
+# disable ppc, ppc64 for now
 filter_available_targets(DFSAN_SUPPORTED_ARCH x86_64)
 filter_available_targets(LSAN_SUPPORTED_ARCH x86_64)
 filter_available_targets(MSAN_SUPPORTED_ARCH x86_64)
