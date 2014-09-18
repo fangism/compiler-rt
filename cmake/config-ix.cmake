@@ -128,7 +128,8 @@ endfunction()
 filter_available_targets(SANITIZER_COMMON_SUPPORTED_ARCH
   x86_64 i386 ppc64 ppc arm aarch64 mips arm_android)
 filter_available_targets(ASAN_SUPPORTED_ARCH
-  x86_64 i386 ppc64 ppc arm mips arm_android)
+  x86_64 i386 arm mips arm_android)
+#  x86_64 i386 ppc64 ppc arm mips arm_android
 filter_available_targets(DFSAN_SUPPORTED_ARCH x86_64)
 filter_available_targets(LSAN_SUPPORTED_ARCH x86_64)
 # LSan common files should be available on all architectures supported
