@@ -40,8 +40,11 @@ check_cxx_compiler_flag("-Werror -Wno-variadic-macros"    COMPILER_RT_HAS_WNO_VA
 
 check_cxx_compiler_flag(/W3 COMPILER_RT_HAS_W3_FLAG)
 check_cxx_compiler_flag(/WX COMPILER_RT_HAS_WX_FLAG)
+check_cxx_compiler_flag(/wd4146 COMPILER_RT_HAS_WD4146_FLAG)
+check_cxx_compiler_flag(/wd4291 COMPILER_RT_HAS_WD4291_FLAG)
 check_cxx_compiler_flag(/wd4391 COMPILER_RT_HAS_WD4391_FLAG)
 check_cxx_compiler_flag(/wd4722 COMPILER_RT_HAS_WD4722_FLAG)
+check_cxx_compiler_flag(/wd4800 COMPILER_RT_HAS_WD4800_FLAG)
 
 # Symbols.
 check_symbol_exists(__func__ "" COMPILER_RT_HAS_FUNC_SYMBOL)
@@ -133,8 +136,10 @@ else()
   elseif("${LLVM_NATIVE_ARCH}" STREQUAL "PowerPC")
   # Explicitly set -m flag on powerpc, because on ppc64 defaults for gcc and
   # clang are different.
-    test_target_arch(ppc64 ${TARGET_64_BIT_CFLAGS})
     test_target_arch(ppc ${TARGET_32_BIT_CFLAGS})
+    test_target_arch(ppc64 ${TARGET_64_BIT_CFLAGS})
+#    test_target_arch(powerpc64 ${TARGET_64_BIT_CFLAGS})
+#    test_target_arch(powerpc64le ${TARGET_64_BIT_CFLAGS})
   elseif("${LLVM_NATIVE_ARCH}" STREQUAL "Mips")
     if("${COMPILER_RT_TEST_TARGET_ARCH}" MATCHES "mipsel|mips64el")
       # regex for mipsel, mips64el                                                                                                                                                                                 
@@ -170,10 +175,11 @@ endfunction()
 
 # Arhcitectures supported by compiler-rt libraries.
 filter_available_targets(SANITIZER_COMMON_SUPPORTED_ARCH
-  x86_64 i386 i686 ppc64 ppc arm aarch64 mips mips64 mipsel mips64el)
+  x86_64 i386 i686 ppc ppc64 arm aarch64 mips mips64 mipsel mips64el)
+# powepc64 powerpc64le
 filter_available_targets(ASAN_SUPPORTED_ARCH
-  x86_64 i386 i686 arm mips mipsel)
 # later: add back ppc64/powerpc64 to ASAN_SUPPORTED_ARCH
+  x86_64 i386 i686 powerpc64le arm mips mipsel)
 filter_available_targets(DFSAN_SUPPORTED_ARCH x86_64)
 filter_available_targets(LSAN_SUPPORTED_ARCH x86_64)
 # LSan common files should be available on all architectures supported
@@ -243,7 +249,7 @@ else()
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND TSAN_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Linux")
+    OS_NAME MATCHES "Linux|FreeBSD")
   set(COMPILER_RT_HAS_TSAN TRUE)
 else()
   set(COMPILER_RT_HAS_TSAN FALSE)

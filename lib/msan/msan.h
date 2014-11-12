@@ -32,8 +32,9 @@
 #define MEM_IS_SHADOW(mem) \
   ((uptr)mem >= 0x200000000000ULL && (uptr)mem <= 0x400000000000ULL)
 
-const int kMsanParamTlsSizeInWords = 100;
-const int kMsanRetvalTlsSizeInWords = 100;
+// These constants must be kept in sync with the ones in MemorySanitizer.cc.
+const int kMsanParamTlsSize = 800;
+const int kMsanRetvalTlsSize = 800;
 
 namespace __msan {
 extern int msan_inited;
@@ -71,7 +72,7 @@ void MsanDie();
 void PrintWarning(uptr pc, uptr bp);
 void PrintWarningWithOrigin(uptr pc, uptr bp, u32 origin);
 
-void GetStackTrace(StackTrace *stack, uptr max_s, uptr pc, uptr bp,
+void GetStackTrace(BufferedStackTrace *stack, uptr max_s, uptr pc, uptr bp,
                    bool request_fast_unwind);
 
 void ReportUMR(StackTrace *stack, u32 origin);
@@ -96,27 +97,24 @@ void CopyPoison(void *dst, const void *src, uptr size, StackTrace *stack);
 // the previous origin id.
 u32 ChainOrigin(u32 id, StackTrace *stack);
 
-#define GET_MALLOC_STACK_TRACE                                     \
-  StackTrace stack;                                                \
-  stack.size = 0;                                                  \
-  if (__msan_get_track_origins() && msan_inited)                   \
-    GetStackTrace(&stack, common_flags()->malloc_context_size,     \
-        StackTrace::GetCurrentPc(), GET_CURRENT_FRAME(),           \
-        common_flags()->fast_unwind_on_malloc)
-
-#define GET_STORE_STACK_TRACE_PC_BP(pc, bp)                  \
-  StackTrace stack;                                          \
-  stack.size = 0;                                            \
-  if (__msan_get_track_origins() > 1 && msan_inited)         \
-  GetStackTrace(&stack, flags()->store_context_size, pc, bp, \
+#define GET_MALLOC_STACK_TRACE                                                 \
+  BufferedStackTrace stack;                                                    \
+  if (__msan_get_track_origins() && msan_inited)                               \
+  GetStackTrace(&stack, common_flags()->malloc_context_size,                   \
+                StackTrace::GetCurrentPc(), GET_CURRENT_FRAME(),               \
                 common_flags()->fast_unwind_on_malloc)
 
-#define GET_FATAL_STACK_TRACE_PC_BP(pc, bp)       \
-  StackTrace stack;                               \
-  stack.size = 0;                                 \
-  if (msan_inited)                                \
-    GetStackTrace(&stack, kStackTraceMax, pc, bp, \
-                  common_flags()->fast_unwind_on_fatal)
+#define GET_STORE_STACK_TRACE_PC_BP(pc, bp)                                    \
+  BufferedStackTrace stack;                                                    \
+  if (__msan_get_track_origins() > 1 && msan_inited)                           \
+  GetStackTrace(&stack, flags()->store_context_size, pc, bp,                   \
+                common_flags()->fast_unwind_on_malloc)
+
+#define GET_FATAL_STACK_TRACE_PC_BP(pc, bp)                                    \
+  BufferedStackTrace stack;                                                    \
+  if (msan_inited)                                                             \
+  GetStackTrace(&stack, kStackTraceMax, pc, bp,                                \
+                common_flags()->fast_unwind_on_fatal)
 
 #define GET_STORE_STACK_TRACE \
   GET_STORE_STACK_TRACE_PC_BP(StackTrace::GetCurrentPc(), GET_CURRENT_FRAME())
