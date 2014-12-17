@@ -505,14 +505,10 @@ TSAN_INTERCEPTOR(void*, __libc_memalign, uptr align, uptr sz) {
 TSAN_INTERCEPTOR(void*, calloc, uptr size, uptr n) {
   if (cur_thread()->in_symbolizer)
     return __libc_calloc(size, n);
-  if (__sanitizer::CallocShouldReturnNullDueToOverflow(size, n))
-    return AllocatorReturnNull();
   void *p = 0;
   {
     SCOPED_INTERCEPTOR_RAW(calloc, size, n);
-    p = user_alloc(thr, pc, n * size);
-    if (p)
-      internal_memset(p, 0, n * size);
+    p = user_calloc(thr, pc, size, n);
   }
   invoke_malloc_hook(p, n * size);
   return p;
@@ -951,6 +947,8 @@ TSAN_INTERCEPTOR(int, pthread_join, void *th, void **ret) {
   }
   return res;
 }
+
+DEFINE_REAL_PTHREAD_FUNCTIONS;
 
 TSAN_INTERCEPTOR(int, pthread_detach, void *th) {
   SCOPED_TSAN_INTERCEPTOR(pthread_detach, th);
@@ -1800,9 +1798,16 @@ TSAN_INTERCEPTOR(uptr, fwrite, const void *p, uptr size, uptr nmemb, void *f) {
   return REAL(fwrite)(p, size, nmemb, f);
 }
 
+static void FlushStreams() {
+  // Flushing all the streams here may freeze the process if a child thread is
+  // performing file stream operations at the same time.
+  REAL(fflush)(stdout);
+  REAL(fflush)(stderr);
+}
+
 TSAN_INTERCEPTOR(void, abort, int fake) {
   SCOPED_TSAN_INTERCEPTOR(abort, fake);
-  REAL(fflush)(0);
+  FlushStreams();
   REAL(abort)(fake);
 }
 
@@ -2131,7 +2136,7 @@ TSAN_INTERCEPTOR(int, vfork, int fake) {
 
 static int OnExit(ThreadState *thr) {
   int status = Finalize(thr);
-  REAL(fflush)(0);
+  FlushStreams();
   return status;
 }
 
@@ -2367,10 +2372,7 @@ static void finalize(void *arg) {
   ThreadState *thr = cur_thread();
   int status = Finalize(thr);
   // Make sure the output is not lost.
-  // Flushing all the streams here may freeze the process if a child thread is
-  // performing file stream operations at the same time.
-  REAL(fflush)(stdout);
-  REAL(fflush)(stderr);
+  FlushStreams();
   if (status)
     REAL(_exit)(status);
 }
@@ -2563,21 +2565,6 @@ void InitializeInterceptors() {
   }
 
   FdInit();
-}
-
-void *internal_start_thread(void(*func)(void *arg), void *arg) {
-  // Start the thread with signals blocked, otherwise it can steal user signals.
-  __sanitizer_sigset_t set, old;
-  internal_sigfillset(&set);
-  internal_sigprocmask(SIG_SETMASK, &set, &old);
-  void *th;
-  REAL(pthread_create)(&th, 0, (void*(*)(void *arg))func, arg);
-  internal_sigprocmask(SIG_SETMASK, &old, 0);
-  return th;
-}
-
-void internal_join_thread(void *th) {
-  REAL(pthread_join)(th, 0);
 }
 
 }  // namespace __tsan

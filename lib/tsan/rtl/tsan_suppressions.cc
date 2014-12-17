@@ -33,7 +33,7 @@ static const char *const std_suppressions =
 "race:std::_Sp_counted_ptr_inplace<std::thread::_Impl\n";
 
 // Can be overriden in frontend.
-#ifndef TSAN_GO
+#ifndef SANITIZER_GO
 extern "C" const char *WEAK __tsan_default_suppressions() {
   return 0;
 }
@@ -46,7 +46,7 @@ static bool suppressions_inited = false;
 void InitializeSuppressions() {
   CHECK(!suppressions_inited);
   SuppressionContext::InitIfNecessary();
-#ifndef TSAN_GO
+#ifndef SANITIZER_GO
   SuppressionContext::Get()->Parse(__tsan_default_suppressions());
   SuppressionContext::Get()->Parse(std_suppressions);
 #endif
@@ -92,7 +92,8 @@ uptr IsSuppressed(ReportType typ, const ReportStack *stack, Suppression **sp) {
   if (stype == SuppressionNone)
     return 0;
   Suppression *s;
-  for (const ReportStack *frame = stack; frame; frame = frame->next) {
+  for (const SymbolizedStack *frame = stack->frames; frame;
+       frame = frame->next) {
     const AddressInfo &info = frame->info;
     if (SuppressionContext::Get()->Match(info.function, stype, &s) ||
         SuppressionContext::Get()->Match(info.file, stype, &s) ||

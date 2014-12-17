@@ -14,10 +14,8 @@
 
 #include "sanitizer_common/sanitizer_allocator.h"
 #include "sanitizer_common/sanitizer_allocator_interface.h"
-#include "sanitizer_common/sanitizer_stackdepot.h"
 #include "msan.h"
 #include "msan_allocator.h"
-#include "msan_chained_origin_depot.h"
 #include "msan_origin.h"
 #include "msan_thread.h"
 
@@ -75,7 +73,7 @@ static inline void Init() {
   if (inited) return;
   __msan_init();
   inited = true;  // this must happen before any threads are created.
-  allocator.Init();
+  allocator.Init(common_flags()->allocator_may_return_null);
 }
 
 AllocatorCache *GetAllocatorCache(MsanThreadLocalMallocStorage *ms) {
@@ -94,7 +92,7 @@ static void *MsanAllocate(StackTrace *stack, uptr size, uptr alignment,
   if (size > kMaxAllowedMallocSize) {
     Report("WARNING: MemorySanitizer failed to allocate %p bytes\n",
            (void *)size);
-    return AllocatorReturnNull();
+    return allocator.ReturnNullOrDie();
   }
   MsanThread *t = GetCurrentThread();
   void *allocated;
@@ -114,11 +112,8 @@ static void *MsanAllocate(StackTrace *stack, uptr size, uptr alignment,
   } else if (flags()->poison_in_malloc) {
     __msan_poison(allocated, size);
     if (__msan_get_track_origins()) {
-      u32 stack_id = StackDepotPut(*stack);
-      CHECK(stack_id);
-      u32 id;
-      ChainedOriginDepotPut(stack_id, Origin::kHeapRoot, &id);
-      __msan_set_origin(allocated, size, Origin(id, 1).raw_id());
+      Origin o = Origin::CreateHeapOrigin(stack);
+      __msan_set_origin(allocated, size, o.raw_id());
     }
   }
   MSAN_MALLOC_HOOK(allocated, size);
@@ -137,11 +132,8 @@ void MsanDeallocate(StackTrace *stack, void *p) {
   if (flags()->poison_in_free) {
     __msan_poison(p, size);
     if (__msan_get_track_origins()) {
-      u32 stack_id = StackDepotPut(*stack);
-      CHECK(stack_id);
-      u32 id;
-      ChainedOriginDepotPut(stack_id, Origin::kHeapRoot, &id);
-      __msan_set_origin(p, size, Origin(id, 1).raw_id());
+      Origin o = Origin::CreateHeapOrigin(stack);
+      __msan_set_origin(p, size, o.raw_id());
     }
   }
   MsanThread *t = GetCurrentThread();
@@ -153,6 +145,13 @@ void MsanDeallocate(StackTrace *stack, void *p) {
     AllocatorCache *cache = &fallback_allocator_cache;
     allocator.Deallocate(cache, p);
   }
+}
+
+void *MsanCalloc(StackTrace *stack, uptr nmemb, uptr size) {
+  Init();
+  if (CallocShouldReturnNullDueToOverflow(size, nmemb))
+    return allocator.ReturnNullOrDie();
+  return MsanReallocate(stack, 0, nmemb * size, sizeof(u64), true);
 }
 
 void *MsanReallocate(StackTrace *stack, void *old_p, uptr new_size,

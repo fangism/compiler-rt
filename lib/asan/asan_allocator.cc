@@ -1,4 +1,4 @@
-//===-- asan_allocator2.cc ------------------------------------------------===//
+//===-- asan_allocator.cc -------------------------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -253,13 +253,14 @@ struct QuarantineCallback {
   AllocatorCache *cache_;
 };
 
-void InitializeAllocator() {
-  allocator.Init();
-  quarantine.Init((uptr)flags()->quarantine_size, kMaxThreadLocalQuarantine);
+void InitializeAllocator(bool may_return_null, uptr quarantine_size) {
+  allocator.Init(may_return_null);
+  quarantine.Init(quarantine_size, kMaxThreadLocalQuarantine);
 }
 
-void ReInitializeAllocator() {
-  quarantine.Init((uptr)flags()->quarantine_size, kMaxThreadLocalQuarantine);
+void ReInitializeAllocator(bool may_return_null, uptr quarantine_size) {
+  allocator.SetMayReturnNull(may_return_null);
+  quarantine.Init(quarantine_size, kMaxThreadLocalQuarantine);
 }
 
 static void *Allocate(uptr size, uptr alignment, BufferedStackTrace *stack,
@@ -297,7 +298,7 @@ static void *Allocate(uptr size, uptr alignment, BufferedStackTrace *stack,
   if (size > kMaxAllowedMallocSize || needed_size > kMaxAllowedMallocSize) {
     Report("WARNING: AddressSanitizer failed to allocate %p bytes\n",
            (void*)size);
-    return AllocatorReturnNull();
+    return allocator.ReturnNullOrDie();
   }
 
   AsanThread *t = GetCurrentThread();
@@ -311,9 +312,9 @@ static void *Allocate(uptr size, uptr alignment, BufferedStackTrace *stack,
     allocated = allocator.Allocate(cache, needed_size, 8, false);
   }
 
-  if (*(u8 *)MEM_TO_SHADOW((uptr)allocated) == 0 && flags()->poison_heap) {
+  if (*(u8 *)MEM_TO_SHADOW((uptr)allocated) == 0 && CanPoisonMemory()) {
     // Heap poisoning is enabled, but the allocator provides an unpoisoned
-    // chunk. This is possible if flags()->poison_heap was disabled for some
+    // chunk. This is possible if CanPoisonMemory() was false for some
     // time, for example, due to flags()->start_disabled.
     // Anyway, poison the block before using it for anything else.
     uptr allocated_size = allocator.GetActuallyAllocatedSize(allocated);
@@ -361,7 +362,7 @@ static void *Allocate(uptr size, uptr alignment, BufferedStackTrace *stack,
   if (size_rounded_down_to_granularity)
     PoisonShadow(user_beg, size_rounded_down_to_granularity, 0);
   // Deal with the end of the region if size is not aligned to granularity.
-  if (size != size_rounded_down_to_granularity && fl.poison_heap) {
+  if (size != size_rounded_down_to_granularity && CanPoisonMemory()) {
     u8 *shadow = (u8*)MemToShadow(user_beg + size_rounded_down_to_granularity);
     *shadow = fl.poison_partial ? (size & (SHADOW_GRANULARITY - 1)) : 0;
   }
@@ -598,7 +599,7 @@ void *asan_malloc(uptr size, BufferedStackTrace *stack) {
 
 void *asan_calloc(uptr nmemb, uptr size, BufferedStackTrace *stack) {
   if (CallocShouldReturnNullDueToOverflow(size, nmemb))
-    return AllocatorReturnNull();
+    return allocator.ReturnNullOrDie();
   void *ptr = Allocate(nmemb * size, 8, stack, FROM_MALLOC, false);
   // If the memory comes from the secondary allocator no need to clear it
   // as it comes directly from mmap.

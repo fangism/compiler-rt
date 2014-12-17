@@ -9,7 +9,7 @@
 //
 // This file is a part of AddressSanitizer, an address sanity checker.
 //
-// ASan-private header for asan_allocator2.cc.
+// ASan-private header for asan_allocator.cc.
 //===----------------------------------------------------------------------===//
 
 #ifndef ASAN_ALLOCATOR_H
@@ -31,8 +31,8 @@ enum AllocType {
 static const uptr kNumberOfSizeClasses = 255;
 struct AsanChunk;
 
-void InitializeAllocator();
-void ReInitializeAllocator();
+void InitializeAllocator(bool may_return_null, uptr quarantine_size);
+void ReInitializeAllocator(bool may_return_null, uptr quarantine_size);
 
 class AsanChunkView {
  public:

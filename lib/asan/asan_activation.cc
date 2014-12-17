@@ -16,6 +16,8 @@
 #include "asan_allocator.h"
 #include "asan_flags.h"
 #include "asan_internal.h"
+#include "asan_poisoning.h"
+#include "asan_stack.h"
 #include "sanitizer_common/sanitizer_flags.h"
 
 namespace __asan {
@@ -60,29 +62,26 @@ void AsanActivate() {
 
   // Restore flag values.
   // FIXME: this is not atomic, and there may be other threads alive.
-  flags()->quarantine_size = asan_deactivated_flags.quarantine_size;
   flags()->max_redzone = asan_deactivated_flags.max_redzone;
-  flags()->poison_heap = asan_deactivated_flags.poison_heap;
-  common_flags()->malloc_context_size =
-      asan_deactivated_flags.malloc_context_size;
   flags()->alloc_dealloc_mismatch =
       asan_deactivated_flags.alloc_dealloc_mismatch;
-  common_flags()->allocator_may_return_null =
-      asan_deactivated_flags.allocator_may_return_null;
 
   ParseExtraActivationFlags();
 
-  ReInitializeAllocator();
+  SetCanPoisonMemory(asan_deactivated_flags.poison_heap);
+  SetMallocContextSize(asan_deactivated_flags.malloc_context_size);
+  ReInitializeAllocator(asan_deactivated_flags.allocator_may_return_null,
+                        asan_deactivated_flags.quarantine_size);
 
   asan_is_deactivated = false;
-  VReport(
-      1,
-      "quarantine_size %d, max_redzone %d, poison_heap %d, "
-      "malloc_context_size %d, alloc_dealloc_mismatch %d, "
-      "allocator_may_return_null %d\n",
-      flags()->quarantine_size, flags()->max_redzone, flags()->poison_heap,
-      common_flags()->malloc_context_size, flags()->alloc_dealloc_mismatch,
-      common_flags()->allocator_may_return_null);
+  VReport(1, "quarantine_size %d, max_redzone %d, poison_heap %d, "
+             "malloc_context_size %d, alloc_dealloc_mismatch %d, "
+             "allocator_may_return_null %d\n",
+          asan_deactivated_flags.quarantine_size, flags()->max_redzone,
+          asan_deactivated_flags.poison_heap,
+          asan_deactivated_flags.malloc_context_size,
+          flags()->alloc_dealloc_mismatch,
+          asan_deactivated_flags.allocator_may_return_null);
 }
 
 }  // namespace __asan
