@@ -170,8 +170,8 @@ DECLARE_REAL_AND_INTERCEPTOR(void, free, void *)
   } while (false)
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) REAL(name)
 #define COMMON_INTERCEPTOR_ON_EXIT(ctx) OnExit()
-#define COMMON_INTERCEPTOR_LIBRARY_LOADED(filename, res) CovUpdateMapping()
-#define COMMON_INTERCEPTOR_LIBRARY_UNLOADED() CovUpdateMapping()
+#define COMMON_INTERCEPTOR_LIBRARY_LOADED(filename, res) CoverageUpdateMapping()
+#define COMMON_INTERCEPTOR_LIBRARY_UNLOADED() CoverageUpdateMapping()
 #define COMMON_INTERCEPTOR_NOTHING_IS_INITIALIZED (!asan_inited)
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
@@ -197,6 +197,12 @@ struct ThreadStartParam {
 };
 
 static thread_return_t THREAD_CALLING_CONV asan_thread_start(void *arg) {
+#if SANITIZER_WINDOWS
+  // FIXME: this is a bandaid fix for PR22025.
+  AsanThread *t = (AsanThread*)arg;
+  SetCurrentThread(t);
+  return t->ThreadStart(GetTid(), /* signal_thread_is_registered */ nullptr);
+#else
   ThreadStartParam *param = reinterpret_cast<ThreadStartParam *>(arg);
   AsanThread *t = nullptr;
   while ((t = reinterpret_cast<AsanThread *>(
@@ -204,6 +210,7 @@ static thread_return_t THREAD_CALLING_CONV asan_thread_start(void *arg) {
     internal_sched_yield();
   SetCurrentThread(t);
   return t->ThreadStart(GetTid(), &param->is_registered);
+#endif
 }
 
 #if ASAN_INTERCEPT_PTHREAD_CREATE
@@ -241,23 +248,22 @@ INTERCEPTOR(int, pthread_create, void *thread,
 INTERCEPTOR(int, pthread_join, void *t, void **arg) {
   return real_pthread_join(t, arg);
 }
-DEFINE_REAL_PTHREAD_FUNCTIONS;
+
+DEFINE_REAL_PTHREAD_FUNCTIONS
 #endif  // ASAN_INTERCEPT_PTHREAD_CREATE
 
 #if ASAN_INTERCEPT_SIGNAL_AND_SIGACTION
 
 #if SANITIZER_ANDROID
 INTERCEPTOR(void*, bsd_signal, int signum, void *handler) {
-  if (!AsanInterceptsSignal(signum) ||
-      common_flags()->allow_user_segv_handler) {
+  if (!IsDeadlySignal(signum) || common_flags()->allow_user_segv_handler) {
     return REAL(bsd_signal)(signum, handler);
   }
   return 0;
 }
 #else
 INTERCEPTOR(void*, signal, int signum, void *handler) {
-  if (!AsanInterceptsSignal(signum) ||
-      common_flags()->allow_user_segv_handler) {
+  if (!IsDeadlySignal(signum) || common_flags()->allow_user_segv_handler) {
     return REAL(signal)(signum, handler);
   }
   return 0;
@@ -266,8 +272,7 @@ INTERCEPTOR(void*, signal, int signum, void *handler) {
 
 INTERCEPTOR(int, sigaction, int signum, const struct sigaction *act,
                             struct sigaction *oldact) {
-  if (!AsanInterceptsSignal(signum) ||
-      common_flags()->allow_user_segv_handler) {
+  if (!IsDeadlySignal(signum) || common_flags()->allow_user_segv_handler) {
     return REAL(sigaction)(signum, act, oldact);
   }
   return 0;
@@ -808,23 +813,14 @@ INTERCEPTOR_WINAPI(DWORD, CreateThread,
   if (flags()->strict_init_order)
     StopInitOrderChecking();
   GET_STACK_TRACE_THREAD;
+  // FIXME: The CreateThread interceptor is not the same as a pthread_create
+  // one.  This is a bandaid fix for PR22025.
   bool detached = false;  // FIXME: how can we determine it on Windows?
-  ThreadStartParam param;
-  atomic_store(&param.t, 0, memory_order_relaxed);
-  atomic_store(&param.is_registered, 0, memory_order_relaxed);
-  DWORD result = REAL(CreateThread)(security, stack_size, asan_thread_start,
-                                    &param, thr_flags, tid);
-  if (result) {
-    u32 current_tid = GetCurrentTidOrInvalid();
-    AsanThread *t =
+  u32 current_tid = GetCurrentTidOrInvalid();
+  AsanThread *t =
         AsanThread::Create(start_routine, arg, current_tid, &stack, detached);
-    atomic_store(&param.t, reinterpret_cast<uptr>(t), memory_order_release);
-    // The pthread_create interceptor waits here, so we do the same for
-    // consistency.
-    while (atomic_load(&param.is_registered, memory_order_acquire) == 0)
-      internal_sched_yield();
-  }
-  return result;
+  return REAL(CreateThread)(security, stack_size,
+                            asan_thread_start, t, thr_flags, tid);
 }
 
 namespace __asan {

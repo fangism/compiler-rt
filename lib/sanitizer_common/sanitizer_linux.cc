@@ -109,14 +109,16 @@ namespace __sanitizer {
 #endif
 
 // --------------- sanitizer_libc.h
-uptr internal_mmap(void *addr, uptr length, int prot, int flags,
-                    int fd, u64 offset) {
+uptr internal_mmap(void *addr, uptr length, int prot, int flags, int fd,
+                   u64 offset) {
 #if SANITIZER_FREEBSD || SANITIZER_LINUX_USES_64BIT_SYSCALLS
   return internal_syscall(SYSCALL(mmap), (uptr)addr, length, prot, flags, fd,
                           offset);
 #else
+  // mmap2 specifies file offset in 4096-byte units.
+  CHECK(IsAligned(offset, 4096));
   return internal_syscall(SYSCALL(mmap2), addr, length, prot, flags, fd,
-                          offset);
+                          offset / 4096);
 #endif
 }
 
@@ -432,7 +434,7 @@ uptr GetRSS() {
   buf[len] = 0;
   // The format of the file is:
   // 1084 89 69 11 0 79 0
-  // We need the second number which is RSS in 4K units.
+  // We need the second number which is RSS in pages.
   char *pos = buf;
   // Skip the first number.
   while (*pos >= '0' && *pos <= '9')
@@ -444,7 +446,7 @@ uptr GetRSS() {
   uptr rss = 0;
   while (*pos >= '0' && *pos <= '9')
     rss = rss * 10 + *pos++ - '0';
-  return rss * 4096;
+  return rss * GetPageSizeCached();
 }
 
 static void GetArgsAndEnv(char*** argv, char*** envp) {
@@ -935,9 +937,10 @@ void GetExtraActivationFlags(char *buf, uptr size) {
 #endif
 
 bool IsDeadlySignal(int signum) {
-  return (signum == SIGSEGV) && common_flags()->handle_segv;
+  return (signum == SIGSEGV || signum == SIGBUS) && common_flags()->handle_segv;
 }
 
+#ifndef SANITIZER_GO
 void *internal_start_thread(void(*func)(void *arg), void *arg) {
   // Start the thread with signals blocked, otherwise it can steal user signals.
   __sanitizer_sigset_t set, old;
@@ -952,6 +955,11 @@ void *internal_start_thread(void(*func)(void *arg), void *arg) {
 void internal_join_thread(void *th) {
   real_pthread_join(th, 0);
 }
+#else
+void *internal_start_thread(void (*func)(void *), void *arg) { return 0; }
+
+void internal_join_thread(void *th) {}
+#endif
 
 }  // namespace __sanitizer
 

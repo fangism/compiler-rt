@@ -27,7 +27,6 @@
 #include <stdio.h>
 #include <wchar.h>
 #include <math.h>
-#include <malloc.h>
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -43,19 +42,25 @@
 #include <sys/resource.h>
 #include <sys/ioctl.h>
 #include <sys/statvfs.h>
-#include <sys/sysinfo.h>
 #include <sys/utsname.h>
 #include <sys/mman.h>
-#include <sys/vfs.h>
 #include <dirent.h>
 #include <pwd.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <wordexp.h>
-#include <mntent.h>
-#include <netinet/ether.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+
+#if !defined(__FreeBSD__)
+# include <malloc.h>
+# include <sys/sysinfo.h>
+# include <sys/vfs.h>
+# include <mntent.h>
+# include <netinet/ether.h>
+#else
+# include <netinet/in.h>
+#endif
 
 #if defined(__i386__) || defined(__x86_64__)
 # include <emmintrin.h>
@@ -66,6 +71,13 @@
 
 #ifdef __AVX2__
 # include <immintrin.h>
+#endif
+
+// On FreeBSD procfs is not enabled by default.
+#if defined(__FreeBSD__)
+# define FILE_TO_READ "/bin/cat"
+#else
+# define FILE_TO_READ "/proc/self/stat"
 #endif
 
 static const size_t kPageSize = 4096;
@@ -559,7 +571,7 @@ TEST(MemorySanitizer, strerror_r) {
 
 TEST(MemorySanitizer, fread) {
   char *x = new char[32];
-  FILE *f = fopen("/proc/self/stat", "r");
+  FILE *f = fopen(FILE_TO_READ, "r");
   ASSERT_TRUE(f != NULL);
   fread(x, 1, 32, f);
   EXPECT_NOT_POISONED(x[0]);
@@ -571,7 +583,7 @@ TEST(MemorySanitizer, fread) {
 
 TEST(MemorySanitizer, read) {
   char *x = new char[32];
-  int fd = open("/proc/self/stat", O_RDONLY);
+  int fd = open(FILE_TO_READ, O_RDONLY);
   ASSERT_GT(fd, 0);
   int sz = read(fd, x, 32);
   ASSERT_EQ(sz, 32);
@@ -584,7 +596,7 @@ TEST(MemorySanitizer, read) {
 
 TEST(MemorySanitizer, pread) {
   char *x = new char[32];
-  int fd = open("/proc/self/stat", O_RDONLY);
+  int fd = open(FILE_TO_READ, O_RDONLY);
   ASSERT_GT(fd, 0);
   int sz = pread(fd, x, 32, 0);
   ASSERT_EQ(sz, 32);
@@ -602,7 +614,7 @@ TEST(MemorySanitizer, readv) {
   iov[0].iov_len = 5;
   iov[1].iov_base = buf + 10;
   iov[1].iov_len = 2000;
-  int fd = open("/proc/self/stat", O_RDONLY);
+  int fd = open(FILE_TO_READ, O_RDONLY);
   ASSERT_GT(fd, 0);
   int sz = readv(fd, iov, 2);
   ASSERT_GE(sz, 0);
@@ -626,7 +638,7 @@ TEST(MemorySanitizer, preadv) {
   iov[0].iov_len = 5;
   iov[1].iov_base = buf + 10;
   iov[1].iov_len = 2000;
-  int fd = open("/proc/self/stat", O_RDONLY);
+  int fd = open(FILE_TO_READ, O_RDONLY);
   ASSERT_GT(fd, 0);
   int sz = preadv(fd, iov, 2, 3);
   ASSERT_GE(sz, 0);
@@ -657,10 +669,9 @@ TEST(MemorySanitizer, readlink) {
   delete [] x;
 }
 
-
 TEST(MemorySanitizer, stat) {
   struct stat* st = new struct stat;
-  int res = stat("/proc/self/stat", st);
+  int res = stat(FILE_TO_READ, st);
   ASSERT_EQ(0, res);
   EXPECT_NOT_POISONED(st->st_dev);
   EXPECT_NOT_POISONED(st->st_mode);
@@ -973,7 +984,6 @@ TEST(MemorySanitizer, recvmsg) {
   ASSERT_EQ(0, res);
   ASSERT_EQ(sizeof(client_sai), sz);
 
-  
   const char *s = "message text";
   struct iovec iov;
   iov.iov_base = (void *)s;
@@ -1157,7 +1167,7 @@ TEST(MemorySanitizer, shmctl) {
 
 TEST(MemorySanitizer, shmat) {
   void *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
-                 MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   ASSERT_NE(MAP_FAILED, p);
 
   ((char *)p)[10] = *GetPoisoned<U1>();
@@ -4116,7 +4126,8 @@ TEST(MemorySanitizer, LargeAllocatorUnpoisonsOnFree) {
 
   // Allocate the page that was released to the OS in free() with the real mmap,
   // bypassing the interceptor.
-  char *q = (char *)real_mmap(p, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+  char *q = (char *)real_mmap(p, 4096, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   ASSERT_NE((char *)0, q);
 
   ASSERT_TRUE(q <= p);

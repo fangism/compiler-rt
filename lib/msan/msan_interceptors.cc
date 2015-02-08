@@ -318,6 +318,8 @@ INTERCEPTOR(char *, stpcpy, char *dest, const char *src) {  // NOLINT
 INTERCEPTOR(char *, strdup, char *src) {
   ENSURE_MSAN_INITED();
   GET_STORE_STACK_TRACE;
+  // On FreeBSD strdup() leverages strlen().
+  InterceptorScope interceptor_scope;
   SIZE_T n = REAL(strlen)(src);
   char *res = REAL(strdup)(src);
   CopyPoison(res, src, n + 1, &stack);
@@ -341,6 +343,8 @@ INTERCEPTOR(char *, __strdup, char *src) {
 INTERCEPTOR(char *, strndup, char *src, SIZE_T n) {
   ENSURE_MSAN_INITED();
   GET_STORE_STACK_TRACE;
+  // On FreeBSD strndup() leverages strnlen().
+  InterceptorScope interceptor_scope;
   SIZE_T copy_size = REAL(strnlen)(src, n);
   char *res = REAL(strndup)(src, n);
   CopyPoison(res, src, copy_size, &stack);
@@ -849,14 +853,29 @@ INTERCEPTOR(int, getrlimit64, int resource, void *rlim) {
 #define MSAN_MAYBE_INTERCEPT_GETRLIMIT64
 #endif
 
-INTERCEPTOR(int, uname, void *utsname) {
+#if SANITIZER_FREEBSD
+// FreeBSD's <sys/utsname.h> define uname() as
+// static __inline int uname(struct utsname *name) {
+//   return __xuname(SYS_NMLN, (void*)name);
+// }
+INTERCEPTOR(int, __xuname, int size, void *utsname) {
   ENSURE_MSAN_INITED();
-  int res = REAL(uname)(utsname);
-  if (!res) {
+  int res = REAL(__xuname)(size, utsname);
+  if (!res)
     __msan_unpoison(utsname, __sanitizer::struct_utsname_sz);
-  }
   return res;
 }
+#define MSAN_INTERCEPT_UNAME INTERCEPT_FUNCTION(__xuname)
+#else
+INTERCEPTOR(int, uname, struct utsname *utsname) {
+  ENSURE_MSAN_INITED();
+  int res = REAL(uname)(utsname);
+  if (!res)
+    __msan_unpoison(utsname, __sanitizer::struct_utsname_sz);
+  return res;
+}
+#define MSAN_INTERCEPT_UNAME INTERCEPT_FUNCTION(uname)
+#endif
 
 INTERCEPTOR(int, gethostname, char *name, SIZE_T len) {
   ENSURE_MSAN_INITED();
@@ -1629,7 +1648,7 @@ void InitializeInterceptors() {
   MSAN_MAYBE_INTERCEPT_FGETS_UNLOCKED;
   INTERCEPT_FUNCTION(getrlimit);
   MSAN_MAYBE_INTERCEPT_GETRLIMIT64;
-  INTERCEPT_FUNCTION(uname);
+  MSAN_INTERCEPT_UNAME;
   INTERCEPT_FUNCTION(gethostname);
   MSAN_MAYBE_INTERCEPT_EPOLL_WAIT;
   MSAN_MAYBE_INTERCEPT_EPOLL_PWAIT;

@@ -211,6 +211,7 @@ class AllocatorStats {
   void Init() {
     internal_memset(this, 0, sizeof(*this));
   }
+  void InitLinkerInitialized() {}
 
   void Add(AllocatorStat i, uptr v) {
     v += atomic_load(&stats_[i], memory_order_relaxed);
@@ -240,10 +241,13 @@ class AllocatorStats {
 // Global stats, used for aggregation and querying.
 class AllocatorGlobalStats : public AllocatorStats {
  public:
-  void Init() {
-    internal_memset(this, 0, sizeof(*this));
+  void InitLinkerInitialized() {
     next_ = this;
     prev_ = this;
+  }
+  void Init() {
+    internal_memset(this, 0, sizeof(*this));
+    InitLinkerInitialized();
   }
 
   void Register(AllocatorStats *s) {
@@ -1002,10 +1006,14 @@ struct SizeClassAllocatorLocalCache {
 template <class MapUnmapCallback = NoOpMapUnmapCallback>
 class LargeMmapAllocator {
  public:
-  void Init(bool may_return_null) {
-    internal_memset(this, 0, sizeof(*this));
+  void InitLinkerInitialized(bool may_return_null) {
     page_size_ = GetPageSizeCached();
     atomic_store(&may_return_null_, may_return_null, memory_order_relaxed);
+  }
+
+  void Init(bool may_return_null) {
+    internal_memset(this, 0, sizeof(*this));
+    InitLinkerInitialized(may_return_null);
   }
 
   void *Allocate(AllocatorStats *stat, uptr size, uptr alignment) {
@@ -1254,19 +1262,31 @@ template <class PrimaryAllocator, class AllocatorCache,
           class SecondaryAllocator>  // NOLINT
 class CombinedAllocator {
  public:
-  void Init(bool may_return_null) {
+  void InitCommon(bool may_return_null) {
     primary_.Init();
-    secondary_.Init(may_return_null);
-    stats_.Init();
     atomic_store(&may_return_null_, may_return_null, memory_order_relaxed);
   }
 
+  void InitLinkerInitialized(bool may_return_null) {
+    secondary_.InitLinkerInitialized(may_return_null);
+    stats_.InitLinkerInitialized();
+    InitCommon(may_return_null);
+  }
+
+  void Init(bool may_return_null) {
+    secondary_.Init(may_return_null);
+    stats_.Init();
+    InitCommon(may_return_null);
+  }
+
   void *Allocate(AllocatorCache *cache, uptr size, uptr alignment,
-                 bool cleared = false) {
+                 bool cleared = false, bool check_rss_limit = false) {
     // Returning 0 on malloc(0) may break a lot of code.
     if (size == 0)
       size = 1;
     if (size + alignment < size)
+      return ReturnNullOrDie();
+    if (check_rss_limit && RssLimitIsExceeded())
       return ReturnNullOrDie();
     if (alignment > 8)
       size = RoundUpTo(size, alignment);
@@ -1283,8 +1303,12 @@ class CombinedAllocator {
     return res;
   }
 
+  bool MayReturnNull() const {
+    return atomic_load(&may_return_null_, memory_order_acquire);
+  }
+
   void *ReturnNullOrDie() {
-    if (atomic_load(&may_return_null_, memory_order_acquire))
+    if (MayReturnNull())
       return 0;
     ReportAllocatorCannotReturnNull();
   }
@@ -1292,6 +1316,15 @@ class CombinedAllocator {
   void SetMayReturnNull(bool may_return_null) {
     secondary_.SetMayReturnNull(may_return_null);
     atomic_store(&may_return_null_, may_return_null, memory_order_release);
+  }
+
+  bool RssLimitIsExceeded() {
+    return atomic_load(&rss_limit_is_exceeded_, memory_order_acquire);
+  }
+
+  void SetRssLimitIsExceeded(bool rss_limit_is_exceeded) {
+    atomic_store(&rss_limit_is_exceeded_, rss_limit_is_exceeded,
+                 memory_order_release);
   }
 
   void Deallocate(AllocatorCache *cache, void *p) {
@@ -1407,6 +1440,7 @@ class CombinedAllocator {
   SecondaryAllocator secondary_;
   AllocatorGlobalStats stats_;
   atomic_uint8_t may_return_null_;
+  atomic_uint8_t rss_limit_is_exceeded_;
 };
 
 // Returns true if calloc(size, n) should return 0 due to overflow in size*n.
