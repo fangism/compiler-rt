@@ -54,45 +54,7 @@
 
 namespace __asan {
 
-// adjusting for different struct member names on darwin8
-// see /usr/include/i386/_structs.h on darwin9+
-// see /usr/include/i386/ucontext.h on darwin8
-#if	__DARWIN_VERSION__ && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
-#define	STATE_MEM		ss
-#else
-#define	STATE_MEM		__ss
-#endif
-
-// see /usr/include/mach/i386/_structs.h on darwin9+
-// see /usr/include/mach/i386/thread_status.h on darwin8
-#if	defined(__APPLE__) && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
-#define	THREAD_MEM(x)	x
-#else
-#define	THREAD_MEM(x)	__ ## x
-#endif
-
-void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
-  ucontext_t *ucontext = (ucontext_t*)context;
-#if defined(__ppc__) || defined(__ppc64__)
-  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(srr0);
-  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);		// or r31
-	// powerpc has no dedicated frame pointer
-  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);
-#else
-# if SANITIZER_WORDSIZE == 64
-  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rip);
-  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rbp);
-  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rsp);
-# else
-  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(eip);
-  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(ebp);
-  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(esp);
-# endif  // SANITIZER_WORDSIZE
-#endif
-}
-
-#undef	STATE_MEM
-#undef	THREAD_MEM
+void InitializePlatformInterceptors() {}
 
 bool PlatformHasDifferentMemcpyAndMemmove() {
   // On OS X 10.7 memcpy() and memmove() are both resolved
@@ -142,7 +104,15 @@ void LeakyResetEnv(const char *name, const char *name_value) {
   }
 }
 
+static bool reexec_disabled = false;
+
+void DisableReexec() {
+  reexec_disabled = true;
+}
+
 void MaybeReexec() {
+  if (reexec_disabled) return;
+
   // Make sure the dynamic ASan runtime library is preloaded so that the
   // wrappers work. If it is not, set DYLD_INSERT_LIBRARIES and re-exec
   // ourselves.
@@ -153,8 +123,10 @@ void MaybeReexec() {
   uptr old_env_len = dyld_insert_libraries ?
       internal_strlen(dyld_insert_libraries) : 0;
   uptr fname_len = internal_strlen(info.dli_fname);
+  const char *dylib_name = StripModuleName(info.dli_fname);
+  uptr dylib_name_len = internal_strlen(dylib_name);
   if (!dyld_insert_libraries ||
-      !REAL(strstr)(dyld_insert_libraries, StripModuleName(info.dli_fname))) {
+      !REAL(strstr)(dyld_insert_libraries, dylib_name)) {
     // DYLD_INSERT_LIBRARIES is not set or does not contain the runtime
     // library.
     char program_name[1024];
@@ -189,56 +161,65 @@ void MaybeReexec() {
            "possibly because of sandbox restrictions. Make sure to launch the "
            "executable with:\n%s=%s\n", kDyldInsertLibraries, new_env);
     CHECK("execv failed" && 0);
-  } else {
-    // DYLD_INSERT_LIBRARIES is set and contains the runtime library.
-    if (old_env_len == fname_len) {
-      // It's just the runtime library name - fine to unset the variable.
-      LeakyResetEnv(kDyldInsertLibraries, NULL);
-    } else {
-      uptr env_name_len = internal_strlen(kDyldInsertLibraries);
-      // Allocate memory to hold the previous env var name, its value, the '='
-      // sign and the '\0' char.
-      char *new_env = (char*)allocator_for_env.Allocate(
-          old_env_len + 2 + env_name_len);
-      CHECK(new_env);
-      internal_memset(new_env, '\0', old_env_len + 2 + env_name_len);
-      internal_strncpy(new_env, kDyldInsertLibraries, env_name_len);
-      new_env[env_name_len] = '=';
-      char *new_env_pos = new_env + env_name_len + 1;
-
-      // Iterate over colon-separated pieces of |dyld_insert_libraries|.
-      char *piece_start = dyld_insert_libraries;
-      char *piece_end = NULL;
-      char *old_env_end = dyld_insert_libraries + old_env_len;
-      do {
-        if (piece_start[0] == ':') piece_start++;
-        piece_end =  REAL(strchr)(piece_start, ':');
-        if (!piece_end) piece_end = dyld_insert_libraries + old_env_len;
-        if ((uptr)(piece_start - dyld_insert_libraries) > old_env_len) break;
-        uptr piece_len = piece_end - piece_start;
-
-        // If the current piece isn't the runtime library name,
-        // append it to new_env.
-        if ((piece_len != fname_len) ||
-            (internal_strncmp(piece_start, info.dli_fname, fname_len) != 0)) {
-          if (new_env_pos != new_env + env_name_len + 1) {
-            new_env_pos[0] = ':';
-            new_env_pos++;
-          }
-          internal_strncpy(new_env_pos, piece_start, piece_len);
-        }
-        // Move on to the next piece.
-        new_env_pos += piece_len;
-        piece_start = piece_end;
-      } while (piece_start < old_env_end);
-
-      // Can't use setenv() here, because it requires the allocator to be
-      // initialized.
-      // FIXME: instead of filtering DYLD_INSERT_LIBRARIES here, do it in
-      // a separate function called after InitializeAllocator().
-      LeakyResetEnv(kDyldInsertLibraries, new_env);
-    }
   }
+
+  // DYLD_INSERT_LIBRARIES is set and contains the runtime library. Let's remove
+  // the dylib from the environment variable, because interceptors are installed
+  // and we don't want our children to inherit the variable.
+
+  uptr env_name_len = internal_strlen(kDyldInsertLibraries);
+  // Allocate memory to hold the previous env var name, its value, the '='
+  // sign and the '\0' char.
+  char *new_env = (char*)allocator_for_env.Allocate(
+      old_env_len + 2 + env_name_len);
+  CHECK(new_env);
+  internal_memset(new_env, '\0', old_env_len + 2 + env_name_len);
+  internal_strncpy(new_env, kDyldInsertLibraries, env_name_len);
+  new_env[env_name_len] = '=';
+  char *new_env_pos = new_env + env_name_len + 1;
+
+  // Iterate over colon-separated pieces of |dyld_insert_libraries|.
+  char *piece_start = dyld_insert_libraries;
+  char *piece_end = NULL;
+  char *old_env_end = dyld_insert_libraries + old_env_len;
+  do {
+    if (piece_start[0] == ':') piece_start++;
+    piece_end = REAL(strchr)(piece_start, ':');
+    if (!piece_end) piece_end = dyld_insert_libraries + old_env_len;
+    if ((uptr)(piece_start - dyld_insert_libraries) > old_env_len) break;
+    uptr piece_len = piece_end - piece_start;
+
+    char *filename_start =
+        (char *)internal_memrchr(piece_start, '/', piece_len);
+    uptr filename_len = piece_len;
+    if (filename_start) {
+      filename_start += 1;
+      filename_len = piece_len - (filename_start - piece_start);
+    } else {
+      filename_start = piece_start;
+    }
+
+    // If the current piece isn't the runtime library name,
+    // append it to new_env.
+    if ((dylib_name_len != filename_len) ||
+        (internal_memcmp(filename_start, dylib_name, dylib_name_len) != 0)) {
+      if (new_env_pos != new_env + env_name_len + 1) {
+        new_env_pos[0] = ':';
+        new_env_pos++;
+      }
+      internal_strncpy(new_env_pos, piece_start, piece_len);
+      new_env_pos += piece_len;
+    }
+    // Move on to the next piece.
+    piece_start = piece_end;
+  } while (piece_start < old_env_end);
+
+  // Can't use setenv() here, because it requires the allocator to be
+  // initialized.
+  // FIXME: instead of filtering DYLD_INSERT_LIBRARIES here, do it in
+  // a separate function called after InitializeAllocator().
+  if (new_env_pos == new_env + env_name_len + 1) new_env = NULL;
+  LeakyResetEnv(kDyldInsertLibraries, new_env);
 }
 
 // No-op. Mac does not support static linkage anyway.
@@ -354,7 +335,7 @@ asan_block_context_t *alloc_asan_context(void *ctxt, dispatch_function_t func,
                                   dispatch_function_t func) {                 \
     GET_STACK_TRACE_THREAD;                                                   \
     asan_block_context_t *asan_ctxt = alloc_asan_context(ctxt, func, &stack); \
-    if (common_flags()->verbosity >= 2) {                                     \
+    if (Verbosity() >= 2) {                                     \
       Report(#dispatch_x_f "(): context: %p, pthread_self: %p\n",             \
              asan_ctxt, pthread_self());                                      \
       PRINT_CURRENT_STACK();                                                  \
@@ -373,7 +354,7 @@ INTERCEPTOR(void, dispatch_after_f, dispatch_time_t when,
                                     dispatch_function_t func) {
   GET_STACK_TRACE_THREAD;
   asan_block_context_t *asan_ctxt = alloc_asan_context(ctxt, func, &stack);
-  if (common_flags()->verbosity >= 2) {
+  if (Verbosity() >= 2) {
     Report("dispatch_after_f: %p\n", asan_ctxt);
     PRINT_CURRENT_STACK();
   }
@@ -386,7 +367,7 @@ INTERCEPTOR(void, dispatch_group_async_f, dispatch_group_t group,
                                           dispatch_function_t func) {
   GET_STACK_TRACE_THREAD;
   asan_block_context_t *asan_ctxt = alloc_asan_context(ctxt, func, &stack);
-  if (common_flags()->verbosity >= 2) {
+  if (Verbosity() >= 2) {
     Report("dispatch_group_async_f(): context: %p, pthread_self: %p\n",
            asan_ctxt, pthread_self());
     PRINT_CURRENT_STACK();
@@ -414,13 +395,6 @@ void dispatch_source_set_event_handler(dispatch_source_t ds, void(^work)(void));
     asan_register_worker_thread(parent_tid, &stack); \
     work(); \
   }
-
-// Forces the compiler to generate a frame pointer in the function.
-#define ENABLE_FRAME_POINTER                                       \
-  do {                                                             \
-    volatile uptr enable_fp;                                       \
-    enable_fp = GET_CURRENT_FRAME();                               \
-  } while (0)
 
 INTERCEPTOR(void, dispatch_async,
             dispatch_queue_t dq, void(^work)(void)) {

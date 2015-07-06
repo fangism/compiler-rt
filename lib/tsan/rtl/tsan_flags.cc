@@ -12,10 +12,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "sanitizer_common/sanitizer_flags.h"
+#include "sanitizer_common/sanitizer_flag_parser.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "tsan_flags.h"
 #include "tsan_rtl.h"
 #include "tsan_mman.h"
+#include "ubsan/ubsan_flags.h"
 
 namespace __tsan {
 
@@ -41,36 +43,58 @@ void Flags::SetDefaults() {
   second_deadlock_stack = false;
 }
 
-void Flags::ParseFromString(const char *str) {
-#define TSAN_FLAG(Type, Name, DefaultValue, Description)                     \
-  ParseFlag(str, &Name, #Name, Description);
+void RegisterTsanFlags(FlagParser *parser, Flags *f) {
+#define TSAN_FLAG(Type, Name, DefaultValue, Description) \
+  RegisterFlag(parser, #Name, Description, &f->Name);
 #include "tsan_flags.inc"
 #undef TSAN_FLAG
   // DDFlags
-  ParseFlag(str, &second_deadlock_stack, "second_deadlock_stack", "");
+  RegisterFlag(parser, "second_deadlock_stack",
+      "Report where each mutex is locked in deadlock reports",
+      &f->second_deadlock_stack);
 }
 
 void InitializeFlags(Flags *f, const char *env) {
-  f->SetDefaults();
-
   SetCommonFlagsDefaults();
   {
     // Override some common flags defaults.
     CommonFlags cf;
     cf.CopyFrom(*common_flags());
     cf.allow_addr2line = true;
+#ifndef SANITIZER_GO
     cf.detect_deadlocks = true;
+#endif
     cf.print_suppressions = false;
     cf.stack_trace_format = "    #%n %f %S %M";
     OverrideCommonFlags(cf);
   }
 
+  f->SetDefaults();
+
+  FlagParser parser;
+  RegisterTsanFlags(&parser, f);
+  RegisterCommonFlags(&parser);
+
+#if TSAN_CONTAINS_UBSAN
+  __ubsan::Flags *uf = __ubsan::flags();
+  uf->SetDefaults();
+
+  FlagParser ubsan_parser;
+  __ubsan::RegisterUbsanFlags(&ubsan_parser, uf);
+  RegisterCommonFlags(&ubsan_parser);
+#endif
+
   // Let a frontend override.
-  f->ParseFromString(__tsan_default_options());
-  ParseCommonFlagsFromString(__tsan_default_options());
+  parser.ParseString(__tsan_default_options());
+#if TSAN_CONTAINS_UBSAN
+  const char *ubsan_default_options = __ubsan::MaybeCallUbsanDefaultOptions();
+  ubsan_parser.ParseString(ubsan_default_options);
+#endif
   // Override from command line.
-  f->ParseFromString(env);
-  ParseCommonFlagsFromString(env);
+  parser.ParseString(env);
+#if TSAN_CONTAINS_UBSAN
+  ubsan_parser.ParseString(GetEnv("UBSAN_OPTIONS"));
+#endif
 
   // Sanity check.
   if (!f->report_bugs) {
@@ -79,8 +103,11 @@ void InitializeFlags(Flags *f, const char *env) {
     f->report_signal_unsafe = false;
   }
 
-  if (common_flags()->help)
-    PrintFlagDescriptions();
+  SetVerbosity(common_flags()->verbosity);
+
+  if (Verbosity()) ReportUnrecognizedFlags();
+
+  if (common_flags()->help) parser.PrintFlagDescriptions();
 
   if (f->history_size < 0 || f->history_size > 7) {
     Printf("ThreadSanitizer: incorrect value for history_size"

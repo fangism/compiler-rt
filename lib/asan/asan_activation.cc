@@ -29,9 +29,23 @@ static struct AsanDeactivatedFlags {
   bool coverage;
   const char *coverage_dir;
 
+  void RegisterActivationFlags(FlagParser *parser, Flags *f, CommonFlags *cf) {
+#define ASAN_ACTIVATION_FLAG(Type, Name) \
+  RegisterFlag(parser, #Name, "", &f->Name);
+#define COMMON_ACTIVATION_FLAG(Type, Name) \
+  RegisterFlag(parser, #Name, "", &cf->Name);
+#include "asan_activation_flags.inc"
+#undef ASAN_ACTIVATION_FLAG
+#undef COMMON_ACTIVATION_FLAG
+
+    RegisterIncludeFlag(parser, cf);
+  }
+
   void OverrideFromActivationFlags() {
     Flags f;
     CommonFlags cf;
+    FlagParser parser;
+    RegisterActivationFlags(&parser, &f, &cf);
 
     // Copy the current activation flags.
     allocator_options.CopyTo(&f, &cf);
@@ -39,20 +53,24 @@ static struct AsanDeactivatedFlags {
     f.poison_heap = poison_heap;
     cf.coverage = coverage;
     cf.coverage_dir = coverage_dir;
+    cf.verbosity = Verbosity();
+    cf.help = false; // this is activation-specific help
 
     // Check if activation flags need to be overriden.
-    // FIXME: Add diagnostic to check that activation flags string doesn't
-    // contain any other flags.
     if (const char *env = GetEnv("ASAN_ACTIVATION_OPTIONS")) {
-      cf.ParseFromString(env);
-      f.ParseFromString(env);
+      parser.ParseString(env);
     }
 
     // Override from getprop asan.options.
     char buf[100];
     GetExtraActivationFlags(buf, sizeof(buf));
-    cf.ParseFromString(buf);
-    f.ParseFromString(buf);
+    parser.ParseString(buf);
+
+    SetVerbosity(cf.verbosity);
+
+    if (Verbosity()) ReportUnrecognizedFlags();
+
+    if (cf.help) parser.PrintFlagDescriptions();
 
     allocator_options.SetFrom(&f, &cf);
     malloc_context_size = cf.malloc_context_size;
@@ -115,7 +133,7 @@ void AsanActivate() {
   ReInitializeAllocator(asan_deactivated_flags.allocator_options);
 
   asan_is_deactivated = false;
-  if (common_flags()->verbosity) {
+  if (Verbosity()) {
     Report("Activated with flags:\n");
     asan_deactivated_flags.Print();
   }

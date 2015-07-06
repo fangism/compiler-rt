@@ -47,13 +47,13 @@ endmacro()
 #                         OUTPUT_NAME <output library name>)
 macro(add_compiler_rt_runtime name arch type)
   if(CAN_TARGET_${arch})
-    parse_arguments(LIB "SOURCES;CFLAGS;DEFS;OUTPUT_NAME" "" ${ARGN})
+    parse_arguments(LIB "SOURCES;CFLAGS;LINKFLAGS;DEFS;OUTPUT_NAME" "" ${ARGN})
     add_library(${name} ${type} ${LIB_SOURCES})
     # Setup compile flags and definitions.
     set_target_compile_flags(${name}
       ${TARGET_${arch}_CFLAGS} ${LIB_CFLAGS})
     set_target_link_flags(${name}
-      ${TARGET_${arch}_CFLAGS} ${LIB_CFLAGS})
+      ${TARGET_${arch}_CFLAGS} ${LIB_CFLAGS} ${LIB_LINKFLAGS})
     set_property(TARGET ${name} APPEND PROPERTY
       COMPILE_DEFINITIONS ${LIB_DEFS})
     # Setup correct output directory in the build tree.
@@ -167,6 +167,9 @@ macro(add_compiler_rt_test test_suite test_name)
     set(output_bin "${CMAKE_CURRENT_BINARY_DIR}/${TEST_SUBDIR}/${test_name}")
   else()
     set(output_bin "${CMAKE_CURRENT_BINARY_DIR}/${test_name}")
+  endif()
+  if(MSVC)
+    set(output_bin "${output_bin}.exe")
   endif()
   # Use host compiler in a standalone build, and just-built Clang otherwise.
   if(NOT COMPILER_RT_STANDALONE_BUILD)

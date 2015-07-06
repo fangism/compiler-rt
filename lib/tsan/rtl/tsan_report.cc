@@ -335,10 +335,8 @@ void PrintReport(const ReportDesc *rep) {
     Printf("  And %d more similar thread leaks.\n\n", rep->count - 1);
 
   if (ReportStack *stack = ChooseSummaryStack(rep)) {
-    if (SymbolizedStack *frame = SkipTsanInternalFrames(stack->frames)) {
-      const AddressInfo &info = frame->info;
-      ReportErrorSummary(rep_typ_str, info.file, info.line, info.function);
-    }
+    if (SymbolizedStack *frame = SkipTsanInternalFrames(stack->frames))
+      ReportErrorSummary(rep_typ_str, frame->info);
   }
 
   Printf("==================\n");
@@ -356,8 +354,9 @@ void PrintStack(const ReportStack *ent) {
   SymbolizedStack *frame = ent->frames;
   for (int i = 0; frame; frame = frame->next, i++) {
     const AddressInfo &info = frame->info;
-    Printf("  %s()\n      %s:%d +0x%zx\n", info.function, info.file, info.line,
-           (void *)info.module_offset);
+    Printf("  %s()\n      %s:%d +0x%zx\n", info.function,
+        StripPathPrefix(info.file, common_flags()->strip_path_prefix),
+        info.line, (void *)info.module_offset);
   }
 }
 

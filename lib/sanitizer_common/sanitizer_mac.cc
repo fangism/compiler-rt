@@ -27,13 +27,16 @@
 #include "sanitizer_libc.h"
 #include "sanitizer_mac.h"
 #include "sanitizer_placement_new.h"
+#include "sanitizer_platform_limits_posix.h"	// for __DARWIN_VERSION__
 #include "sanitizer_procmaps.h"
 
 #include <crt_externs.h>  // for _NSGetEnviron
 #include <fcntl.h>
+#include <mach-o/dyld.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -42,6 +45,7 @@
 #include <unistd.h>
 #include <libkern/OSAtomic.h>
 #include <errno.h>
+#include <ucontext.h>	// for struct mcontext
 
 namespace __sanitizer {
 
@@ -57,6 +61,10 @@ uptr internal_munmap(void *addr, uptr length) {
   return munmap(addr, length);
 }
 
+int internal_mprotect(void *addr, uptr length, int prot) {
+  return mprotect(addr, length, prot);
+}
+
 uptr internal_close(fd_t fd) {
   return close(fd);
 }
@@ -67,11 +75,6 @@ uptr internal_open(const char *filename, int flags) {
 
 uptr internal_open(const char *filename, int flags, u32 mode) {
   return open(filename, flags, mode);
-}
-
-uptr OpenFile(const char *filename, bool write) {
-  return internal_open(filename,
-      write ? O_WRONLY | O_CREAT : O_RDONLY, 0660);
 }
 
 uptr internal_read(fd_t fd, void *buf, uptr count) {
@@ -204,21 +207,27 @@ const char *GetEnv(const char *name) {
   return 0;
 }
 
+uptr ReadBinaryName(/*out*/char *buf, uptr buf_len) {
+  CHECK_LE(kMaxPathLength, buf_len);
+
+  // On OS X the executable path is saved to the stack by dyld. Reading it
+  // from there is much faster than calling dladdr, especially for large
+  // binaries with symbols.
+  InternalScopedString exe_path(kMaxPathLength);
+  uint32_t size = exe_path.size();
+  if (_NSGetExecutablePath(exe_path.data(), &size) == 0 &&
+      realpath(exe_path.data(), buf) != 0) {
+    return internal_strlen(buf);
+  }
+  return 0;
+}
+
 void ReExec() {
   UNIMPLEMENTED();
 }
 
-void PrepareForSandboxing(__sanitizer_sandbox_arguments *args) {
-  (void)args;
-  // Nothing here for now.
-}
-
 uptr GetPageSize() {
   return sysconf(_SC_PAGESIZE);
-}
-
-BlockingMutex::BlockingMutex(LinkerInitialized) {
-  // We assume that OS_SPINLOCK_INIT is zero
 }
 
 BlockingMutex::BlockingMutex() {
@@ -332,6 +341,54 @@ uptr GetRSS() {
 
 void *internal_start_thread(void (*func)(void *arg), void *arg) { return 0; }
 void internal_join_thread(void *th) { }
+
+// The following macros are provided by sanitizer_platform_limits_posix.h
+// MAC_OS_X_VERSION_SELECTED
+// __DARWIN_VERSION__
+#ifndef	__DARWIN_VERSION__
+#define	__DARWIN_VERSION__	0
+#error "Undefined __DARWIN_VERSION__: expected from sanitizer_platform_limits_posix.h"
+#endif
+
+// adjusting for different struct member names on darwin8
+// see /usr/include/i386/_structs.h on darwin9+
+// see /usr/include/i386/ucontext.h on darwin8
+#if	__DARWIN_VERSION__ && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
+#define	STATE_MEM		ss
+#else
+#define	STATE_MEM		__ss
+#endif
+
+// see /usr/include/mach/i386/_structs.h on darwin9+
+// see /usr/include/mach/i386/thread_status.h on darwin8
+#if	defined(__APPLE__) && (!__DARWIN_UNIX03 || (__DARWIN_VERSION__ < 9))
+#define	THREAD_MEM(x)	x
+#else
+#define	THREAD_MEM(x)	__ ## x
+#endif
+
+void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
+  ucontext_t *ucontext = (ucontext_t*)context;
+#if defined(__ppc__) || defined(__ppc64__)
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(srr0);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);		// or r31
+	// powerpc has no dedicated frame pointer
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);
+#else
+# if SANITIZER_WORDSIZE == 64
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rbp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rsp);
+# else
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(eip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(ebp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(esp);
+# endif  // SANITIZER_WORDSIZE
+#endif
+}
+
+#undef	STATE_MEM
+#undef	THREAD_MEM
 
 }  // namespace __sanitizer
 

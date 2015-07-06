@@ -18,7 +18,10 @@
 #include "sanitizer_common.h"
 #include "sanitizer_flags.h"
 #include "sanitizer_platform_limits_posix.h"
+#include "sanitizer_posix.h"
+#include "sanitizer_procmaps.h"
 #include "sanitizer_stacktrace.h"
+#include "sanitizer_symbolizer.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -42,6 +45,18 @@ uptr GetThreadSelf() {
 
 void FlushUnneededShadowMemory(uptr addr, uptr size) {
   madvise((void*)addr, size, MADV_DONTNEED);
+}
+
+void NoHugePagesInRegion(uptr addr, uptr size) {
+#ifdef MADV_NOHUGEPAGE  // May not be defined on old systems.
+  madvise((void *)addr, size, MADV_NOHUGEPAGE);
+#endif  // MADV_NOHUGEPAGE
+}
+
+void DontDumpShadowMemory(uptr addr, uptr length) {
+#ifdef MADV_DONTDUMP
+  madvise((void *)addr, length, MADV_DONTDUMP);
+#endif
 }
 
 static rlim_t getlim(int res) {
@@ -107,8 +122,8 @@ int Atexit(void (*function)(void)) {
 #endif
 }
 
-int internal_isatty(fd_t fd) {
-  return isatty(fd);
+bool SupportsColoredOutput(fd_t fd) {
+  return isatty(fd) != 0;
 }
 
 #ifndef SANITIZER_GO
@@ -163,6 +178,7 @@ void InstallDeadlySignalHandlers(SignalHandlerType handler) {
   if (common_flags()->use_sigaltstack) SetAlternateSignalStack();
   MaybeInstallSigaction(SIGSEGV, handler);
   MaybeInstallSigaction(SIGBUS, handler);
+  MaybeInstallSigaction(SIGABRT, handler);
 }
 #endif  // SANITIZER_GO
 
@@ -186,6 +202,19 @@ bool IsAccessibleMemoryRange(uptr beg, uptr size) {
   internal_close(sock_pair[0]);
   internal_close(sock_pair[1]);
   return result;
+}
+
+void PrepareForSandboxing(__sanitizer_sandbox_arguments *args) {
+  // Some kinds of sandboxes may forbid filesystem access, so we won't be able
+  // to read the file mappings from /proc/self/maps. Luckily, neither the
+  // process will be able to load additional libraries, so it's fine to use the
+  // cached mappings.
+  MemoryMappingLayout::CacheMemoryMappings();
+  // Same for /proc/self/exe in the symbolizer.
+#if !SANITIZER_GO
+  Symbolizer::GetOrInit()->PrepareForSandboxing();
+  CovPrepareForSandboxing(args);
+#endif
 }
 
 }  // namespace __sanitizer

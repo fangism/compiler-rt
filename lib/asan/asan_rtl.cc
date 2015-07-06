@@ -28,6 +28,8 @@
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_symbolizer.h"
 #include "lsan/lsan_common.h"
+#include "ubsan/ubsan_init.h"
+#include "ubsan/ubsan_platform.h"
 
 int __asan_option_detect_stack_use_after_return;  // Global interface symbol.
 uptr *__asan_test_only_reported_buggy_pointer;  // Used only for testing asan.
@@ -86,7 +88,8 @@ void ShowStatsAndAbort() {
 
 // ---------------------- mmap -------------------- {{{1
 // Reserve memory range [beg, end].
-static void ReserveShadowMemoryRange(uptr beg, uptr end) {
+// We need to use inclusive range because end+1 may not be representable.
+void ReserveShadowMemoryRange(uptr beg, uptr end) {
   CHECK_EQ((beg % GetPageSizeCached()), 0);
   CHECK_EQ(((end + 1) % GetPageSizeCached()), 0);
   uptr size = end - beg + 1;
@@ -97,6 +100,10 @@ static void ReserveShadowMemoryRange(uptr beg, uptr end) {
            "Perhaps you're using ulimit -v\n", size);
     Abort();
   }
+  if (common_flags()->no_huge_pages_for_shadow)
+    NoHugePagesInRegion(beg, size);
+  if (common_flags()->use_madv_dontdump)
+    DontDumpShadowMemory(beg, size);
 }
 
 // --------------- LowLevelAllocateCallbac ---------- {{{1
@@ -107,11 +114,15 @@ static void OnLowLevelAllocate(uptr ptr, uptr size) {
 // -------------------------- Run-time entry ------------------- {{{1
 // exported functions
 #define ASAN_REPORT_ERROR(type, is_write, size)                     \
-extern "C" NOINLINE INTERFACE_ATTRIBUTE                        \
-void __asan_report_ ## type ## size(uptr addr);                \
-void __asan_report_ ## type ## size(uptr addr) {               \
+extern "C" NOINLINE INTERFACE_ATTRIBUTE                             \
+void __asan_report_ ## type ## size(uptr addr) {                    \
   GET_CALLER_PC_BP_SP;                                              \
-  __asan_report_error(pc, bp, sp, addr, is_write, size);            \
+  __asan_report_error(pc, bp, sp, addr, is_write, size, 0);         \
+}                                                                   \
+extern "C" NOINLINE INTERFACE_ATTRIBUTE                             \
+void __asan_report_exp_ ## type ## size(uptr addr, u32 exp) {       \
+  GET_CALLER_PC_BP_SP;                                              \
+  __asan_report_error(pc, bp, sp, addr, is_write, size, exp);       \
 }
 
 ASAN_REPORT_ERROR(load, false, 1)
@@ -127,18 +138,20 @@ ASAN_REPORT_ERROR(store, true, 16)
 
 #define ASAN_REPORT_ERROR_N(type, is_write)                    \
 extern "C" NOINLINE INTERFACE_ATTRIBUTE                        \
-void __asan_report_ ## type ## _n(uptr addr, uptr size);       \
 void __asan_report_ ## type ## _n(uptr addr, uptr size) {      \
   GET_CALLER_PC_BP_SP;                                         \
-  __asan_report_error(pc, bp, sp, addr, is_write, size);       \
+  __asan_report_error(pc, bp, sp, addr, is_write, size, 0);    \
+}                                                              \
+extern "C" NOINLINE INTERFACE_ATTRIBUTE                        \
+void __asan_report_exp_ ## type ## _n(uptr addr, uptr size, u32 exp) {      \
+  GET_CALLER_PC_BP_SP;                                                      \
+  __asan_report_error(pc, bp, sp, addr, is_write, size, exp);               \
 }
 
 ASAN_REPORT_ERROR_N(load, false)
 ASAN_REPORT_ERROR_N(store, true)
 
-#define ASAN_MEMORY_ACCESS_CALLBACK(type, is_write, size)                      \
-  extern "C" NOINLINE INTERFACE_ATTRIBUTE void __asan_##type##size(uptr addr); \
-  void __asan_##type##size(uptr addr) {                                        \
+#define ASAN_MEMORY_ACCESS_CALLBACK_BODY(type, is_write, size, exp_arg)        \
     uptr sp = MEM_TO_SHADOW(addr);                                             \
     uptr s = size <= SHADOW_GRANULARITY ? *reinterpret_cast<u8 *>(sp)          \
                                         : *reinterpret_cast<u16 *>(sp);        \
@@ -150,10 +163,19 @@ ASAN_REPORT_ERROR_N(store, true)
           *__asan_test_only_reported_buggy_pointer = addr;                     \
         } else {                                                               \
           GET_CALLER_PC_BP_SP;                                                 \
-          __asan_report_error(pc, bp, sp, addr, is_write, size);               \
+          __asan_report_error(pc, bp, sp, addr, is_write, size, exp_arg);      \
         }                                                                      \
       }                                                                        \
-    }                                                                          \
+    }
+
+#define ASAN_MEMORY_ACCESS_CALLBACK(type, is_write, size)                      \
+  extern "C" NOINLINE INTERFACE_ATTRIBUTE                                      \
+  void __asan_##type##size(uptr addr) {                                        \
+    ASAN_MEMORY_ACCESS_CALLBACK_BODY(type, is_write, size, 0)                  \
+  }                                                                            \
+  extern "C" NOINLINE INTERFACE_ATTRIBUTE                                      \
+  void __asan_exp_##type##size(uptr addr, u32 exp) {                           \
+    ASAN_MEMORY_ACCESS_CALLBACK_BODY(type, is_write, size, exp)                \
   }
 
 ASAN_MEMORY_ACCESS_CALLBACK(load, false, 1)
@@ -168,18 +190,38 @@ ASAN_MEMORY_ACCESS_CALLBACK(store, true, 8)
 ASAN_MEMORY_ACCESS_CALLBACK(store, true, 16)
 
 extern "C"
-NOINLINE INTERFACE_ATTRIBUTE void __asan_loadN(uptr addr, uptr size) {
+NOINLINE INTERFACE_ATTRIBUTE
+void __asan_loadN(uptr addr, uptr size) {
   if (__asan_region_is_poisoned(addr, size)) {
     GET_CALLER_PC_BP_SP;
-    __asan_report_error(pc, bp, sp, addr, false, size);
+    __asan_report_error(pc, bp, sp, addr, false, size, 0);
   }
 }
 
 extern "C"
-NOINLINE INTERFACE_ATTRIBUTE void __asan_storeN(uptr addr, uptr size) {
+NOINLINE INTERFACE_ATTRIBUTE
+void __asan_exp_loadN(uptr addr, uptr size, u32 exp) {
   if (__asan_region_is_poisoned(addr, size)) {
     GET_CALLER_PC_BP_SP;
-    __asan_report_error(pc, bp, sp, addr, true, size);
+    __asan_report_error(pc, bp, sp, addr, false, size, exp);
+  }
+}
+
+extern "C"
+NOINLINE INTERFACE_ATTRIBUTE
+void __asan_storeN(uptr addr, uptr size) {
+  if (__asan_region_is_poisoned(addr, size)) {
+    GET_CALLER_PC_BP_SP;
+    __asan_report_error(pc, bp, sp, addr, true, size, 0);
+  }
+}
+
+extern "C"
+NOINLINE INTERFACE_ATTRIBUTE
+void __asan_exp_storeN(uptr addr, uptr size, u32 exp) {
+  if (__asan_region_is_poisoned(addr, size)) {
+    GET_CALLER_PC_BP_SP;
+    __asan_report_error(pc, bp, sp, addr, true, size, exp);
   }
 }
 
@@ -198,26 +240,40 @@ static NOINLINE void force_interface_symbols() {
     case 3: __asan_report_load4(0); break;
     case 4: __asan_report_load8(0); break;
     case 5: __asan_report_load16(0); break;
-    case 6: __asan_report_store1(0); break;
-    case 7: __asan_report_store2(0); break;
-    case 8: __asan_report_store4(0); break;
-    case 9: __asan_report_store8(0); break;
-    case 10: __asan_report_store16(0); break;
-    case 12: __asan_register_globals(0, 0); break;
-    case 13: __asan_unregister_globals(0, 0); break;
-    case 14: __asan_set_death_callback(0); break;
-    case 15: __asan_set_error_report_callback(0); break;
-    case 16: __asan_handle_no_return(); break;
-    case 17: __asan_address_is_poisoned(0); break;
-    case 25: __asan_poison_memory_region(0, 0); break;
-    case 26: __asan_unpoison_memory_region(0, 0); break;
-    case 27: __asan_set_error_exit_code(0); break;
-    case 30: __asan_before_dynamic_init(0); break;
-    case 31: __asan_after_dynamic_init(); break;
-    case 32: __asan_poison_stack_memory(0, 0); break;
-    case 33: __asan_unpoison_stack_memory(0, 0); break;
-    case 34: __asan_region_is_poisoned(0, 0); break;
-    case 35: __asan_describe_address(0); break;
+    case 6: __asan_report_load_n(0, 0); break;
+    case 7: __asan_report_store1(0); break;
+    case 8: __asan_report_store2(0); break;
+    case 9: __asan_report_store4(0); break;
+    case 10: __asan_report_store8(0); break;
+    case 11: __asan_report_store16(0); break;
+    case 12: __asan_report_store_n(0, 0); break;
+    case 13: __asan_report_exp_load1(0, 0); break;
+    case 14: __asan_report_exp_load2(0, 0); break;
+    case 15: __asan_report_exp_load4(0, 0); break;
+    case 16: __asan_report_exp_load8(0, 0); break;
+    case 17: __asan_report_exp_load16(0, 0); break;
+    case 18: __asan_report_exp_load_n(0, 0, 0); break;
+    case 19: __asan_report_exp_store1(0, 0); break;
+    case 20: __asan_report_exp_store2(0, 0); break;
+    case 21: __asan_report_exp_store4(0, 0); break;
+    case 22: __asan_report_exp_store8(0, 0); break;
+    case 23: __asan_report_exp_store16(0, 0); break;
+    case 24: __asan_report_exp_store_n(0, 0, 0); break;
+    case 25: __asan_register_globals(0, 0); break;
+    case 26: __asan_unregister_globals(0, 0); break;
+    case 27: __asan_set_death_callback(0); break;
+    case 28: __asan_set_error_report_callback(0); break;
+    case 29: __asan_handle_no_return(); break;
+    case 30: __asan_address_is_poisoned(0); break;
+    case 31: __asan_poison_memory_region(0, 0); break;
+    case 32: __asan_unpoison_memory_region(0, 0); break;
+    case 33: __asan_set_error_exit_code(0); break;
+    case 34: __asan_before_dynamic_init(0); break;
+    case 35: __asan_after_dynamic_init(); break;
+    case 36: __asan_poison_stack_memory(0, 0); break;
+    case 37: __asan_unpoison_stack_memory(0, 0); break;
+    case 38: __asan_region_is_poisoned(0, 0); break;
+    case 39: __asan_describe_address(0); break;
   }
 }
 
@@ -241,8 +297,14 @@ static void InitializeHighMemEnd() {
   CHECK_EQ((kHighMemBeg % GetPageSizeCached()), 0);
 }
 
-static void ProtectGap(uptr a, uptr size) {
-  CHECK_EQ(a, (uptr)Mprotect(a, size));
+static void ProtectGap(uptr addr, uptr size) {
+  void *res = MmapNoAccess(addr, size);
+  if (addr == (uptr)res)
+    return;
+  Report("ERROR: Failed to protect the shadow gap. "
+         "ASan cannot proceed correctly. ABORTING.\n");
+  DumpProcessMap();
+  Die();
 }
 
 static void PrintAddressSpaceLayout() {
@@ -285,9 +347,9 @@ static void PrintAddressSpaceLayout() {
   Printf("malloc_context_size=%zu\n",
          (uptr)common_flags()->malloc_context_size);
 
-  Printf("SHADOW_SCALE: %zx\n", (uptr)SHADOW_SCALE);
-  Printf("SHADOW_GRANULARITY: %zx\n", (uptr)SHADOW_GRANULARITY);
-  Printf("SHADOW_OFFSET: %zx\n", (uptr)SHADOW_OFFSET);
+  Printf("SHADOW_SCALE: %d\n", (int)SHADOW_SCALE);
+  Printf("SHADOW_GRANULARITY: %d\n", (int)SHADOW_GRANULARITY);
+  Printf("SHADOW_OFFSET: 0x%zx\n", (uptr)SHADOW_OFFSET);
   CHECK(SHADOW_SCALE >= 3 && SHADOW_SCALE <= 7);
   if (kMidMemBeg)
     CHECK(kMidShadowBeg > kLowShadowEnd &&
@@ -303,7 +365,7 @@ static void AsanInitInternal() {
 
   // Initialize flags. This must be done early, because most of the
   // initialization steps look at flags().
-  InitializeFlags(flags());
+  InitializeFlags();
 
   SetCanPoisonMemory(flags()->poison_heap);
   SetMallocContextSize(common_flags()->malloc_context_size);
@@ -353,8 +415,7 @@ static void AsanInitInternal() {
   }
 #endif
 
-  if (common_flags()->verbosity)
-    PrintAddressSpaceLayout();
+  if (Verbosity()) PrintAddressSpaceLayout();
 
   DisableCoreDumperIfNecessary();
 
@@ -384,6 +445,8 @@ static void AsanInitInternal() {
   } else {
     Report("Shadow memory range interleaves with an existing memory mapping. "
            "ASan cannot proceed correctly. ABORTING.\n");
+    Report("ASan shadow was supposed to be located in the [%p-%p] range.\n",
+           shadow_start, kHighShadowEnd);
     DumpProcessMap();
     Die();
   }
@@ -428,11 +491,15 @@ static void AsanInitInternal() {
   SanitizerInitializeUnwinder();
 
 #if CAN_SANITIZE_LEAKS
-  __lsan::InitCommonLsan(false);
+  __lsan::InitCommonLsan();
   if (common_flags()->detect_leaks && common_flags()->leak_check_at_exit) {
     Atexit(__lsan::DoLeakCheck);
   }
 #endif  // CAN_SANITIZE_LEAKS
+
+#if CAN_SANITIZE_UB
+  __ubsan::InitAsPlugin();
+#endif
 
   InitializeSuppressions();
 

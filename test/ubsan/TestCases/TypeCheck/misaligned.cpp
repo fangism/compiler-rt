@@ -45,7 +45,7 @@ int main(int, char **argv) {
     return *p && 0;
     // Slow stack unwinding is disabled on Darwin for now, see
     // https://code.google.com/p/address-sanitizer/issues/detail?id=137
-    // CHECK-Linux-STACK-LOAD: #0 {{.*}} in main{{.*}}misaligned.cpp
+    // CHECK-Linux-STACK-LOAD: #0 {{.*}}main{{.*}}misaligned.cpp
     // Check for the already checked line to avoid lit error reports.
     // CHECK-Darwin-STACK-LOAD: {{ }}
 
@@ -80,7 +80,7 @@ int main(int, char **argv) {
     return s->f() && 0;
 
   case 'n':
-    // CHECK-NEW: misaligned.cpp:[[@LINE+4]]:13: runtime error: constructor call on misaligned address [[PTR:0x[0-9a-f]*]] for type 'S', which requires 4 byte alignment
+    // CHECK-NEW: misaligned.cpp:[[@LINE+4]]:21: runtime error: constructor call on misaligned address [[PTR:0x[0-9a-f]*]] for type 'S', which requires 4 byte alignment
     // CHECK-NEW-NEXT: [[PTR]]: note: pointer points here
     // CHECK-NEW-NEXT: {{^ 00 00 00 01 02 03 04  05}}
     // CHECK-NEW-NEXT: {{^             \^}}
