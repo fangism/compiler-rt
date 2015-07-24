@@ -1,49 +1,51 @@
 // Test for "sancov.py missing ...".
 
-// RUN: ASAN_OPTIONS=coverage=1:coverage_dir=%T/coverage-missing
+// RUN: export ASAN_OPTIONS=$ASAN_OPTIONS:coverage=1:coverage_dir=%T/coverage-missing
 
-// First case: coverage from executable. main() is called on every code path;
-// other than that, the foo and bar code paths are complementary in terms of
-// PCs covered.
-// RUN: %clangxx_asan -fsanitize-coverage=1 %s -o %t -DFOOBAR -DMAIN
+// First case: coverage from executable. main() is called on every code path.
+// RUN: %clangxx_asan -fsanitize-coverage=func %s -o %t -DFOOBAR -DMAIN
 // RUN: rm -rf %T/coverage-missing
 // RUN: mkdir -p %T/coverage-missing
 // RUN: cd %T/coverage-missing
-// RUN: ASAN_OPTIONS=$ASAN_OPTIONS %t
+// RUN: env ASAN_OPTIONS=$ASAN_OPTIONS %t
 // RUN: %sancov print *.sancov > main.txt
 // RUN: rm *.sancov
 // RUN: [ $(cat main.txt | wc -l) == 1 ]
-// RUN: ASAN_OPTIONS=$ASAN_OPTIONS %t x
+// RUN: env ASAN_OPTIONS=$ASAN_OPTIONS %t x
 // RUN: %sancov print *.sancov > foo.txt
 // RUN: rm *.sancov
 // RUN: [ $(cat foo.txt | wc -l) == 3 ]
-// RUN: ASAN_OPTIONS=$ASAN_OPTIONS %t x x
+// RUN: env ASAN_OPTIONS=$ASAN_OPTIONS %t x x
 // RUN: %sancov print *.sancov > bar.txt
 // RUN: rm *.sancov
 // RUN: [ $(cat bar.txt | wc -l) == 4 ]
 // RUN: %sancov missing %t < foo.txt > foo-missing.txt
 // RUN: sort main.txt foo-missing.txt -o foo-missing-with-main.txt
-// RUN: diff bar.txt foo-missing-with-main.txt
+// The "missing from foo" set may contain a few bogus PCs from the sanitizer
+// runtime, but it must include the entire "bar" code path as a subset. Sorted
+// lists can be tested for set inclusion with diff + grep.
+// RUN: ( diff bar.txt foo-missing-with-main.txt || true ) | not grep "^<"
 
-// Second case: coverage from DSO. Strictly complementary code paths.
+// Second case: coverage from DSO.
 // cd %T
-// RUN: %clangxx_asan -fsanitize-coverage=1 %s -o %dynamiclib -DFOOBAR -shared -fPIC
-// RUN: %clangxx_asan -fsanitize-coverage=1 %s %dynamiclib -o %t -DMAIN
-// RUN: LIBNAME=`basename %dynamiclib`
+// RUN: %clangxx_asan -fsanitize-coverage=func %s -o %dynamiclib -DFOOBAR -shared -fPIC
+// RUN: %clangxx_asan -fsanitize-coverage=func %s %dynamiclib -o %t -DMAIN
+// RUN: export LIBNAME=`basename %dynamiclib`
 // RUN: rm -rf %T/coverage-missing
 // RUN: mkdir -p %T/coverage-missing
 // RUN: cd %T/coverage-missing
-// RUN: ASAN_OPTIONS=$ASAN_OPTIONS %t x
+// RUN: env ASAN_OPTIONS=$ASAN_OPTIONS %t x
 // RUN: %sancov print $LIBNAME.*.sancov > foo.txt
 // RUN: rm *.sancov
 // RUN: [ $(cat foo.txt | wc -l) == 2 ]
-// RUN: ASAN_OPTIONS=$ASAN_OPTIONS %t x x
+// RUN: env ASAN_OPTIONS=$ASAN_OPTIONS %t x x
 // RUN: %sancov print $LIBNAME.*.sancov > bar.txt
 // RUN: rm *.sancov
 // RUN: [ $(cat bar.txt | wc -l) == 3 ]
 // RUN: %sancov missing %dynamiclib < foo.txt > foo-missing.txt
-// RUN: diff bar.txt foo-missing.txt
+// RUN: ( diff bar.txt foo-missing.txt || true ) | not grep "^<"
 
+// REQUIRES: x86_64-supported-target, i386-supported-target
 // XFAIL: android
 
 #include <stdio.h>

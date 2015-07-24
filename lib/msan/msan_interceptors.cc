@@ -1397,6 +1397,14 @@ int OnExit() {
     if (map) ForEachMappedRegion(map, __msan_unpoison);      \
   } while (false)
 
+#define COMMON_INTERCEPTOR_GET_TLS_RANGE(begin, end)                           \
+  if (MsanThread *t = GetCurrentThread()) {                                    \
+    *begin = t->tls_begin();                                                   \
+    *end = t->tls_end();                                                       \
+  } else {                                                                     \
+    *begin = *end = 0;                                                         \
+  }
+
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
 #define COMMON_SYSCALL_PRE_READ_RANGE(p, s) CHECK_UNPOISONED(p, s)
@@ -1433,7 +1441,8 @@ void __msan_clear_and_unpoison(void *a, uptr size) {
 
 void *__msan_memcpy(void *dest, const void *src, SIZE_T n) {
   if (!msan_inited) return internal_memcpy(dest, src, n);
-  if (msan_init_is_running) return REAL(memcpy)(dest, src, n);
+  if (msan_init_is_running || __msan::IsInSymbolizer())
+    return REAL(memcpy)(dest, src, n);
   ENSURE_MSAN_INITED();
   GET_STORE_STACK_TRACE;
   void *res = REAL(memcpy)(dest, src, n);

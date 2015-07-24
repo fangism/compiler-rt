@@ -30,9 +30,17 @@
 #include "sanitizer_platform_limits_posix.h"	// for __DARWIN_VERSION__
 #include "sanitizer_procmaps.h"
 
+#if !SANITIZER_IOS
 #include <crt_externs.h>  // for _NSGetEnviron
+#else
+extern char **environ;
+#endif
+
+#include <errno.h>
 #include <fcntl.h>
+#include <libkern/OSAtomic.h>
 #include <mach-o/dyld.h>
+#include <mach/mach.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -42,10 +50,8 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
-#include <unistd.h>
-#include <libkern/OSAtomic.h>
-#include <errno.h>
 #include <ucontext.h>	// for struct mcontext
+#include <unistd.h>
 
 namespace __sanitizer {
 
@@ -133,6 +139,13 @@ int internal_sigaction(int signum, const void *act, void *oldact) {
                    (struct sigaction *)act, (struct sigaction *)oldact);
 }
 
+void internal_sigfillset(__sanitizer_sigset_t *set) { sigfillset(set); }
+
+uptr internal_sigprocmask(int how, __sanitizer_sigset_t *set,
+                          __sanitizer_sigset_t *oldset) {
+  return sigprocmask(how, set, oldset);
+}
+
 int internal_fork() {
   // TODO(glider): this may call user's pthread_atfork() handlers which is bad.
   return fork();
@@ -183,7 +196,8 @@ void GetThreadStackTopAndBottom(bool at_initialization, uptr *stack_top,
   *stack_bottom = *stack_top - stacksize;
 }
 
-const char *GetEnv(const char *name) {
+char **GetEnviron() {
+#if !SANITIZER_IOS
   char ***env_ptr = _NSGetEnviron();
   if (!env_ptr) {
     Report("_NSGetEnviron() returned NULL. Please make sure __asan_init() is "
@@ -191,18 +205,24 @@ const char *GetEnv(const char *name) {
     CHECK(env_ptr);
   }
   char **environ = *env_ptr;
+#endif
   CHECK(environ);
+  return environ;
+}
+
+const char *GetEnv(const char *name) {
+  char **env = GetEnviron();
   uptr name_len = internal_strlen(name);
-  while (*environ != 0) {
-    uptr len = internal_strlen(*environ);
+  while (*env != 0) {
+    uptr len = internal_strlen(*env);
     if (len > name_len) {
-      const char *p = *environ;
+      const char *p = *env;
       if (!internal_memcmp(p, name, name_len) &&
           p[name_len] == '=') {  // Match.
-        return *environ + name_len + 1;  // String starting after =.
+        return *env + name_len + 1;  // String starting after =.
       }
     }
-    environ++;
+    env++;
   }
   return 0;
 }
@@ -336,7 +356,15 @@ MacosVersion GetMacosVersion() {
 }
 
 uptr GetRSS() {
-  return 0;
+  struct task_basic_info info;
+  unsigned count = TASK_BASIC_INFO_COUNT;
+  kern_return_t result =
+      task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &count);
+  if (UNLIKELY(result != KERN_SUCCESS)) {
+    Report("Cannot get task info. Error: %d\n", result);
+    Die();
+  }
+  return info.resident_size;
 }
 
 void *internal_start_thread(void (*func)(void *arg), void *arg) { return 0; }
@@ -369,22 +397,34 @@ void internal_join_thread(void *th) { }
 
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   ucontext_t *ucontext = (ucontext_t*)context;
-#if defined(__ppc__) || defined(__ppc64__)
+# if defined(__aarch64__)
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(pc);
+#   if defined(__IPHONE_8_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_8_0
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(fp);
+#   else
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(lr);
+#   endif
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(sp);
+# elif defined(__x86_64__)
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rbp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rsp);
+# elif defined(__arm__)
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(pc);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r[7]);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(sp);
+# elif defined(__i386__)
+  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(eip);
+  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(ebp);
+  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(esp);
+# elif defined(__ppc__) || defined(__ppc64__)
   *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(srr0);
   *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);		// or r31
 	// powerpc has no dedicated frame pointer
   *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(r1);
-#else
-# if SANITIZER_WORDSIZE == 64
-  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rip);
-  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rbp);
-  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(rsp);
 # else
-  *pc = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(eip);
-  *bp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(ebp);
-  *sp = ucontext->uc_mcontext->STATE_MEM.THREAD_MEM(esp);
-# endif  // SANITIZER_WORDSIZE
-#endif
+# error "Unknown architecture"
+# endif
 }
 
 #undef	STATE_MEM
