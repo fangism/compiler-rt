@@ -72,7 +72,7 @@ INTERCEPTOR(malloc_zone_t *, malloc_default_purgeable_zone, void) {
   return &asan_zone;
 }
 
-https://developer.apple.com/library/mac/releasenotes/MacOSX/WhatsNewInOSX/Articles/MacOSX10_6.html
+// https://developer.apple.com/library/mac/releasenotes/MacOSX/WhatsNewInOSX/Articles/MacOSX10_6.html
 INTERCEPTOR(void, malloc_make_purgeable, void *ptr) {
   // FIXME: ASan should support purgeable allocations. Ignoring them is fine
   // for now.
